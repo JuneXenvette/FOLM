@@ -13,6 +13,7 @@ The API key is stored only on this PC (~/Games/FOLM/nexus.json, readable by you 
 and is sent only to api.nexusmods.com.
 """
 
+import http.client
 import json
 import os
 import re
@@ -149,6 +150,14 @@ def download_url(link, apikey, opener=urllib.request.urlopen):
     return r[0]["URI"]
 
 
+def safe_url(url):
+    """Percent-encode characters a URL can't carry as-is (Nexus CDN paths contain the file name, spaces and all)."""
+    parts = urllib.parse.urlsplit(url)
+    path = urllib.parse.quote(urllib.parse.unquote(parts.path), safe="/@!$&'()*+,;=:~-._")
+    query = urllib.parse.quote(parts.query, safe="=&%+/:@!$'()*,;~-._?")
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, query, parts.fragment))
+
+
 def _safe_name(name):
     name = os.path.basename(name or "").strip()
     name = re.sub(r'[\x00-\x1f/\\:*?"<>|]', "_", name)
@@ -161,6 +170,7 @@ def download(url, dest_dir, file_name, size=None, log=lambda *a: None, opener=ur
     os.makedirs(dest_dir, exist_ok=True)
     final = os.path.join(dest_dir, _safe_name(file_name))
     part = final + ".part"
+    url = safe_url(url)
     req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION} (Linux)"})
     h = hashlib.md5()
     try:
@@ -178,6 +188,8 @@ def download(url, dest_dir, file_name, size=None, log=lambda *a: None, opener=ur
                     last = time.time()
                     log(f"Downloading {os.path.basename(final)}: {got >> 20} MB"
                         + (f" of {total >> 20} MB ({got * 100 // total}%)" if total else ""))
+    except (ValueError, http.client.HTTPException) as e:          # e.g. a malformed address
+        raise NexusError(f"FOLM couldn't use the download address Nexus gave ({e}).")
     except (urllib.error.URLError, socket.timeout, OSError) as e:
         raise NexusError(f"The download stopped ({getattr(e, 'reason', e)}). Click the Nexus button again to retry.")
     if total and got != total:
