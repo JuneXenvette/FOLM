@@ -629,6 +629,7 @@ class Manager:
         "archive_invalidation": (True, "Archive invalidation: loose mod files override the game's archives"),
         "profile_saves": (True, "Separate saves per profile (the Default profile keeps the normal Saves folder)"),
         "fps_cap": (120, "FPS cap through DXVK, keeps physics stable with V-Sync off (0 = off)"),
+        "borderless": (True, "Borderless window: no title bar, so the whole picture fits the screen"),
     }
 
     def setting(self, key):
@@ -1023,6 +1024,9 @@ class Manager:
         from . import crash
         session = crash.start(self)
         self.launch()
+        if self.setting("borderless"):
+            from . import window
+            window.borderless_when_ready(self.edition, log=log, stop=stop)
         log("Game launched; FOLM is watching for crashes...")
         seen = crash.watch(session, stop=stop)
         if not seen:

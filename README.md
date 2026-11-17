@@ -173,6 +173,10 @@ before it starts. On the command line, `folm.py play` deploys first (`--no-deplo
 - **FPS cap** (default 120): above ~120 FPS these engines' physics break (bouncing NPCs, sped-up game).
   NVTF and Stewie's Tweaks don't include a limiter, so FOLM sets one in DXVK, the Direct3D layer Proton uses:
   `d3d9.maxFrameRate` in the game folder's `dxvk.conf`. Any existing `dxvk.conf` is backed up and restored on undeploy.
+- **Borderless window** (on by default): windowed mode is safest under Proton, but the desktop's title bar
+  pushes the bottom of the picture off screen. After ▶ Play starts the game, FOLM removes the title bar and
+  has the desktop show the window fullscreen. The game stays in windowed mode, so alt-tab is safe. Needs
+  `xdotool`, `xprop` and `wmctrl`.
 - **Before ▶ Play** FOLM checks: mods deployed, Steam running, the exe still 4GB-patched (verifying files in
   Steam undoes it), xNVSE present when NVSE plugins are, missing masters, LOOT errors, saves that need
   plugins that are now off, and V-Sync off with no FPS cap. Problems show in one box: Play anyway or Cancel.
