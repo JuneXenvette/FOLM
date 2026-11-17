@@ -209,6 +209,8 @@ class Manager:
         name = name or self.guess_name(archive)
         if r["type"] == "fomod-xml":
             return self._install_fomod(archive, name, r, chooser or (lambda s, g: fomod.default_choice(g)), log)
+        if r["type"] == "fomod-csharp":
+            return self._install_legacy(archive, name, r, log)
         if r["type"] not in ("data", "data+game-root", "game-root"):
             raise FolmError(f"FOLM can't install '{r['type']}' mods yet.")
         dest = os.path.join(self.mods_dir, name)
@@ -265,6 +267,40 @@ class Manager:
         self.cur["mods"].append({"name": name, "enabled": True, "type": "fomod-xml",
                                  "source": os.path.abspath(archive), "notes": "", "tags": [],
                                  "fomod_choices": choices})
+        self.save()
+        return name, r
+
+    def _install_legacy(self, archive, name, r, log):
+        """Old FOMM C# installer: compile + run it sandboxed (folm_core/legacy.py), then tidy staging."""
+        from . import legacy, nvcase
+        dest = os.path.join(self.mods_dir, name)
+        if os.path.exists(dest):
+            raise FolmError(f"A mod called {name!r} is already staged.")
+        with tempfile.TemporaryDirectory(dir=self.dir) as tmp:
+            out = subprocess.run(["7z", "x", "-y", f"-o{tmp}", archive], capture_output=True, text=True)
+            if out.returncode != 0:
+                raise FolmError(f"extract failed: {out.stderr.strip()[:300]}")
+            root = os.path.join(tmp, r["data_root"]) if r["data_root"] else tmp
+            os.makedirs(dest)
+            plugins, _ = loadorder.scan_plugins(self.data_dir) if os.path.isdir(self.data_dir) else ({}, [])
+            ini_dir = os.path.join(self.data["prefix"], "pfx/drive_c/users/steamuser/Documents/My Games",
+                                   os.path.basename(game_info(self.edition)["ini_dir"]))
+            try:
+                plan = legacy.run(root, self.data["game_dir"], dest, list(plugins), ini_dir=ini_dir, log=log)
+            except legacy.LegacyError as e:
+                shutil.rmtree(dest, ignore_errors=True)
+                raise FolmError(f"old FOMM installer: {e}")
+        if not plan.get("result"):
+            shutil.rmtree(dest, ignore_errors=True)
+            raise FolmError("the mod's installer was cancelled or reported failure")
+        tidy = nvcase.Fixer(lowercase=False)
+        tidy.fix_dir(dest)                       # merge Textures/textures-style twins from the archive
+        requests = [a for a in plan["actions"] if a.get("op") in ("plugin", "ini")]
+        log(f"  installed {plan['installed']} file(s); merged {sum(1 for o in tidy.ops if o['op'] == 'rmdir')} "
+            f"duplicate-case folder(s); {len(requests)} plugin/INI request(s) kept for review")
+        self.cur["mods"].append({"name": name, "enabled": True, "type": "fomod-csharp",
+                                 "source": os.path.abspath(archive), "notes": "", "tags": [],
+                                 "legacy_requests": requests})
         self.save()
         return name, r
 

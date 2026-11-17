@@ -24,6 +24,7 @@ Fallout 3 GOTY, GE-Proton10-34, FOLM v0.3.
 | lStewieAl's Tweaks | 10.05 | Nexus 66347 | data | ✅ | ⏳ | TTW requires ≥ 9.41. Capitalised `Menus/` + `NVSE/` merged by FOLM's case fixing |
 | Stewie Tweaks INI | 2.1 | Nexus 66347 | data | ✅ | ⏳ | Empty starter file; the plugin fills in options on launch |
 | Perk Per Level | 1.0 | Nexus 66347 | data | ✅ | ⏳ | Gameplay change (perk every level) |
+| Project Nevada | 2.5 | Nexus 40040 | fomod-csharp (old FOMM script) | ✅ (FOLM legacy installer: Mono + FOMM shim + bubblewrap sandbox) | ⏳ not deployed (Testing profile only; not for TTW) | The mod's own WinForms installer ran natively. Needed: `CreateCustomForm` in the shim; font-matched scaling (layout was stretched off-window). Patched the player's current start_menu.xml (+5 lines) like FOMM did. 756 files, 16 duplicate-case folders merged. Community Safe Modding list advises against using it in a modern setup |
 
 ## Problems found and fixed in FOLM while testing
 
@@ -31,4 +32,5 @@ Fallout 3 GOTY, GE-Proton10-34, FOLM v0.3.
   archive. FOLM now redates every archive on deploy (undo restores exact dates).
 - **Case-mismatched folders** (`Menus` vs `menus`, `NVSE/plugins` vs `nvse/plugins`): merged on deploy.
 - **TTW installer under Wine:** 12+ hours with per-file `oggenc2.exe`; ~21 minutes with `-NoOggEnc2`.
+- **Old FOMM C# installers:** now compiled with Mono against FOLM's FOMM shim and run in a bubblewrap sandbox (no network, no home folder, writes only to staging). Windows Forms layouts are font-matched so they aren't stretched off-window.
 - **TTW's required INI settings:** FalloutCustom.ini (read by JIP LN) with `SCharGenQuest=001FFFF8`.

@@ -152,7 +152,7 @@ cases for the managers. See [mods/README.md](mods/README.md).
 | 4 | Script extender / memory patch / GECK / xEdit setup under Proton (per edition) | planned |
 | 4b | One-click dependencies: "Download & Install" from the official source, verify, install, confirm it works, removable. Nexus "Mod Manager Download" (nxm://) handler; optional Premium API with the player's own account. "Open official page" as a fallback | planned |
 | 5 | **The app** (`folm_gui.py`, Qt 6): edition + profile switcher, Deploy / Undeploy / Play, mod list with checkboxes, drag-to-reorder and conflict marks, tabs for Plugins (load order + masters + problems), Conflicts, Overwrite, Library (scan folders, double-click to install), Notes/tags, Log; drag a mod file onto the window to install. Same engine as the command line (`folm_core/manager.py`) | ✅ first version |
-| 6 | Legacy FOMM script engine | planned |
+| 6 | **Legacy FOMM C# installers** (`folm_core/legacy.py` + `fomm_shim/FommShim.cs`): compiled with Mono against FOLM's own FOMM shim, run in a bubblewrap sandbox, the mod's own installer window shown natively. First success: Project Nevada 2.5. See [docs/legacy-installers.md](docs/legacy-installers.md) | ✅ first version |
 
 Our own playthrough (TTW + our wasteland-select menu, fixes and QoL) doubles
 as the test lab: every problem we hit becomes a fix in the tool.
