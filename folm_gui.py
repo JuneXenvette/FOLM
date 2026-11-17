@@ -13,7 +13,8 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, Signal, Slot, QUrl                    # noqa: E402
+from PySide6.QtNetwork import QLocalServer                                                     # noqa: E402
+from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, Signal, Slot, QUrl                   # noqa: E402
 from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPixmap, QShortcut      # noqa: E402
 from PySide6.QtWidgets import (                                         # noqa: E402
     QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
@@ -186,6 +187,48 @@ class ModList(QTreeWidget):
         self.order_changed.emit()
 
 
+class HealthDialog(QDialog):
+    """Mod health check results, grouped by area."""
+    ICON = {"ok": "✅", "warn": "⚠️", "error": "✖", "info": "ℹ️"}
+
+    def __init__(self, parent, findings, summary):
+        super().__init__(parent)
+        from folm_core import health
+        self.setWindowTitle("Mod health check")
+        self.resize(900, 520)
+        lay = QVBoxLayout(self)
+        head = QLabel(f"<b>{summary}</b>")
+        lay.addWidget(head)
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["", "What FOLM found"])
+        tree.setColumnWidth(0, 210)
+        tree.setWordWrap(True)
+        tree.setUniformRowHeights(False)
+        for area in health.AREAS:
+            rows = [f for f in findings if f["area"] == area]
+            if not rows:
+                continue
+            worst = next((st for st in ("error", "warn", "info", "ok") if any(r["status"] == st for r in rows)), "ok")
+            top = QTreeWidgetItem([f"{self.ICON[worst]}  {area}", ""])
+            f = top.font(0)
+            f.setBold(True)
+            top.setFont(0, f)
+            tree.addTopLevelItem(top)
+            for r in rows:
+                it = QTreeWidgetItem([self.ICON[r["status"]], r["text"]])
+                it.setToolTip(1, r["text"])
+                top.addChild(it)
+                if r["fix"] and r["status"] != "ok":
+                    fx = QTreeWidgetItem(["", "→ " + r["fix"]])
+                    fx.setForeground(1, QColor("#8a8a8a"))
+                    top.addChild(fx)
+            top.setExpanded(worst != "ok")
+        lay.addWidget(tree)
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+
 class Main(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -196,6 +239,7 @@ class Main(QMainWindow):
         self.loading = False
         self.m = Manager("courier")
         self.bridge = ChoiceBridge(self)
+        self._listen_for_links()
         self.watcher = QFileSystemWatcher(self)       # refresh when the CLI (or anything) changes the setup
         self.watcher.fileChanged.connect(self.on_profile_file_changed)
         self.watcher.directoryChanged.connect(self.on_profile_file_changed)
@@ -236,7 +280,10 @@ class Main(QMainWindow):
         self.btn_geck = QPushButton("🛠 GECK")
         self.btn_geck.setToolTip("Make or edit a mod in GECK with your mods loaded")
         self.btn_geck.clicked.connect(self.open_geck)
-        for w in (self.btn_deploy, self.btn_undeploy, self.btn_play, self.btn_geck):
+        self.btn_health = QPushButton("🩺 Health check")
+        self.btn_health.setToolTip("Check that your mods are really working: files, plugins, and what loaded last launch")
+        self.btn_health.clicked.connect(self.health_check)
+        for w in (self.btn_deploy, self.btn_undeploy, self.btn_play, self.btn_geck, self.btn_health):
             tb.addWidget(w)
         tb.addSeparator()
         b = QPushButton("⟳ Refresh")
@@ -265,6 +312,8 @@ class Main(QMainWindow):
             act.setCheckable(True)
             act.toggled.connect(lambda on, k=key: self.change_setting(k, on))
             self.setting_actions[key] = act
+        self.settings_menu.addSeparator()
+        self.settings_menu.addAction("Nexus Mods account…").triggered.connect(self.nexus_account)
         self.settings_btn.setMenu(self.settings_menu)
         tb.addWidget(self.settings_btn)
 
@@ -823,6 +872,123 @@ class Main(QMainWindow):
                 self.refresh()
         self.run(self.m.geck, edit, then=done)
 
+    # ---------------------------------------------------------------- Nexus "Mod Manager Download"
+    def _listen_for_links(self):
+        """Accept nxm:// links from the link handler while this window is open."""
+        from folm_core import nexus
+        from folm_core.manager import home as folm_home
+        path = nexus.socket_path(folm_home())
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        QLocalServer.removeServer(path)                    # a stale socket from a crash
+        self.link_server = QLocalServer(self)
+        self.link_server.setSocketOptions(QLocalServer.UserAccessOption)
+        if not self.link_server.listen(path):
+            return
+        self.link_server.newConnection.connect(self._on_link_connection)
+
+    def _on_link_connection(self):
+        conn = self.link_server.nextPendingConnection()
+        buf = bytearray()
+
+        def read():
+            buf.extend(bytes(conn.readAll()))
+            if b"\n" in buf:
+                url = buf.split(b"\n")[0].decode("utf-8", "replace").strip()
+                conn.disconnectFromServer()
+                self.handle_nxm(url)
+        conn.readyRead.connect(read)
+        if conn.bytesAvailable():
+            read()
+
+    def nexus_account(self):
+        from folm_core import nexus
+        from folm_core.manager import home as folm_home
+        acc = nexus.account(folm_home()) if nexus.load_key(folm_home()) else {}
+        box = QMessageBox(self)
+        box.setWindowTitle("Nexus Mods account")
+        if acc:
+            box.setText(f"Signed in as <b>{acc.get('name')}</b> ({'Premium' if acc.get('premium') else 'free account'}).<br>"
+                        "The 'Mod Manager Download' button on Nexus sends mods straight to FOLM.")
+            change = box.addButton("Use a different key…", QMessageBox.ActionRole)
+            out = box.addButton("Sign out", QMessageBox.DestructiveRole)
+            box.addButton(QMessageBox.Close)
+            box.exec()
+            if box.clickedButton() is out:
+                nexus.forget_key(folm_home())
+                self.say("Nexus API key removed from this PC.")
+                return
+            if box.clickedButton() is not change:
+                return
+        return self.ask_nexus_key()
+
+    def ask_nexus_key(self):
+        from folm_core import nexus
+        from folm_core.manager import home as folm_home
+        QDesktopServices.openUrl(QUrl("https://www.nexusmods.com/settings/api-keys"))
+        key, ok = QInputDialog.getText(
+            self, "Connect to Nexus Mods",
+            "FOLM opened your Nexus API keys page in the browser.\n"
+            "Copy your Personal API Key (bottom of that page) and paste it here.\n\n"
+            "It's stored only on this PC and sent only to Nexus Mods.", QLineEdit.Password)
+        if not ok or not key.strip():
+            return False
+        try:
+            acc = nexus.validate(key.strip())
+        except nexus.NexusError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return False
+        nexus.save_key(folm_home(), key.strip(), acc)
+        self.say(f"Connected to Nexus Mods as {acc['name']} ({'Premium' if acc['premium'] else 'free account'}).")
+        return True
+
+    def handle_nxm(self, url):
+        from folm_core import nexus
+        from folm_core.manager import home as folm_home
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        try:
+            link = nexus.parse(url)
+        except nexus.NexusError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return
+        if link["edition"] != self.m.edition:
+            i = self.edition.findData(link["edition"])
+            if i >= 0:
+                self.edition.setCurrentIndex(i)            # switches self.m via on_edition
+        if not self.m.ready:
+            QMessageBox.warning(self, APP_NAME, "Set up this game in FOLM first, then click the Nexus button again.")
+            return
+        if not nexus.load_key(folm_home()) and not self.ask_nexus_key():
+            return
+        self.tabs.setCurrentIndex(self.tabs.count() - 1)  # Log tab, to show download progress
+
+        def downloaded(r):
+            if not r:
+                return
+            path, name, source = r
+            name, ok = QInputDialog.getText(self, "Install mod", "Downloaded from Nexus. Name for this mod:", text=name)
+            if not ok or not name.strip():
+                self.say(f"Kept the download in your library: {path}")
+                return
+
+            def installed(res):
+                self.m.set_source(res[0], source)
+                self.say(f"Installed {res[0]} ({res[1]['type']}) from Nexus. Deploy to put it in the game.")
+            self.run(self.m.install, path, name.strip(), self.bridge.chooser, then=installed)
+        self.run(self.m.nexus_download, url, then=downloaded)
+
+    def health_check(self):
+        from folm_core import health
+
+        def done(findings):
+            if findings is None:
+                return
+            summ = health.summary(findings)
+            self.say(f"Health check: {summ}.")
+            HealthDialog(self, findings, summ).exec()
+        self.run(lambda: health.check(self.m), then=done)
+
     def play(self):
         try:
             items = self.m.preflight()
@@ -877,6 +1043,11 @@ def install_error_reporter():
 
 
 def main():
+    if "--nxm" in sys.argv[:-1]:
+        from folm_core import nexus
+        from folm_core.manager import home as folm_home
+        if nexus.send_to_running_app(folm_home(), sys.argv[sys.argv.index("--nxm") + 1]):
+            return                                         # the open FOLM window takes it from here
     install_error_reporter()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
@@ -886,8 +1057,11 @@ def main():
         icon.addFile(os.path.join(HERE, "assets", f"folm-icon-{size}.png"))
     app.setWindowIcon(icon)
     app.setDesktopFileName("folm")
+    nxm = sys.argv[sys.argv.index("--nxm") + 1] if "--nxm" in sys.argv[:-1] else None
     w = Main()
     w.show()
+    if nxm:
+        QTimer.singleShot(300, lambda: w.handle_nxm(nxm))
     sys.exit(app.exec())
 
 

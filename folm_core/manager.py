@@ -810,6 +810,38 @@ class Manager:
         return sorted(dep.walk_rel(d)) if os.path.isdir(d) else []
 
     # ------------------------------------------------------------ library + launch
+    # ------------------------------------------------------------ Nexus downloads
+    def nexus_download(self, url, log=_quiet):
+        """Download a Nexus 'Mod Manager Download' link into the library. Returns (path, suggested name, source)."""
+        from . import nexus
+        self.need()
+        link = nexus.parse(url)
+        if link["edition"] != self.edition:
+            raise FolmError(f"That link is for {game_info(link['edition'])['game']}; switch FOLM to that edition first.")
+        key = nexus.load_key(home())
+        if not key:
+            raise FolmError("Add your Nexus API key first (⚙ Settings → Nexus account, or 'folm.py nexus-login').")
+        try:
+            info = nexus.file_info(link, key)
+            log(f"Nexus: {info['mod_name']} {info['version'] or ''} ({info['file_name']})")
+            dest = os.path.join(home(), "downloads", "nexus", link["game"])
+            path = nexus.download(nexus.download_url(link, key), dest, info["file_name"] or f"{link['file_id']}.7z",
+                                  info["size"], log=log, md5=info.get("md5"))
+        except nexus.NexusError as e:
+            raise FolmError(str(e))
+        self.add_library_folder(dest)
+        name = (info["mod_name"] or self.guess_name(path)).strip()
+        if info.get("version") and info["version"] not in name:
+            name = f"{name} {info['version']}"
+        source = {"site": "nexus", "game": link["game"], "mod_id": link["mod_id"], "file_id": link["file_id"],
+                  "version": info.get("version"), "file_name": info.get("file_name")}
+        return path, re.sub(r'[\\/:*?"<>|]', "-", name), source
+
+    def set_source(self, name, source):
+        """Remember where a mod came from (for update checks later)."""
+        self.mod(name)["source"] = source
+        self.save()
+
     def library_folders(self):
         return self.data.setdefault("library_folders", [])
 

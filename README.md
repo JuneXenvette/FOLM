@@ -114,6 +114,36 @@ On by default (**⚙ Settings** in the app). On deploy FOLM redates the game's a
 is installed, otherwise into the game's `Fallout.ini` (backed up first). Undeploy restores the exact previous
 values. No dummy archive needed.
 
+## Nexus downloads ("Mod Manager Download")
+
+Click **Mod Manager Download** on a Nexus Mods page and FOLM downloads the file, runs the right installer
+(FOMOD wizard, old FOMM script, RAR, plain data…) and adds the mod to your list. Free accounts work: the
+button gives FOLM a one-time download ticket.
+
+1. Connect once: **⚙ Settings → Nexus Mods account…** (or `python3 folm.py nexus-login`). Paste your
+   *Personal API Key* from [nexusmods.com/settings/api-keys](https://www.nexusmods.com/settings/api-keys).
+   It's stored only on this PC (owner-only file) and sent only to the Nexus API.
+2. Make FOLM the handler for Nexus links: `./make-shortcut.sh --nexus` (`--nexus-undo` gives links back to
+   whatever handled them before).
+
+If FOLM is open, links go to that window; otherwise FOLM starts. Downloads are kept in
+`~/Games/FOLM/downloads/nexus/`, and each mod remembers its Nexus page and version. Collections aren't
+supported yet.
+
+## Mod health check
+
+**🩺 Health check** (or `python3 folm.py health`) checks that mods are really working, not just installed:
+
+- every deployed file is still in place and still the mod's (a game update or Steam's "verify files" can
+  quietly replace them)
+- no damaged plugins, archives or DLLs, and every plugin has its masters
+- script extender plugins are in the folder xNVSE/FOSE loads from
+- **after you play:** each one actually *loaded correctly*, read from xNVSE's own log (or why it didn't)
+- no Windows graphics DLL (ENB/ReShade `d3d9.dll`…) replacing DXVK, Proton's Direct3D layer
+- no folders that differ only by letter case
+
+Each problem comes with what to do about it.
+
 ## Recommended mods
 
 For a smooth game on Linux, start with the engine and stability mods in
@@ -230,6 +260,10 @@ python3 folm.py set archive-invalidation on   # loose mod files override the gam
 python3 folm.py set fps-cap 120                # or off; written to dxvk.conf on deploy
 python3 folm.py set profile-saves on          # each profile keeps its own saves
 python3 folm.py preflight                     # the pre-Play checks (play runs them too; --force to skip)
+python3 folm.py health                        # are mods really working? (files, plugins, what loaded)
+python3 folm.py nexus-login                   # connect your Nexus account (personal API key)
+python3 folm.py nxm "nxm://newvegas/mods/…"   # download + install a Mod Manager Download link
+./backup.sh                                   # back up the project, FOLM data, saves and INIs
 ```
 
 Add `--edition wanderer` for Fallout 3. Profiles, staged mods and backups live in `~/Games/FOLM` (override with `FOLM_HOME`).

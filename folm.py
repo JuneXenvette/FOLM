@@ -86,6 +86,48 @@ def cmd_install(a, m):
     print(f"  staged as {name!r} (enabled in profile {m.active!r}). Run 'folm.py deploy'.")
 
 
+def cmd_nexus_login(a, m):
+    import getpass
+    from folm_core import nexus
+    from folm_core.manager import home
+    print("Get your personal API key at https://www.nexusmods.com/settings/api-keys (bottom of the page).")
+    key = getpass.getpass("Paste it here (it won't show): ").strip()
+    if not key:
+        raise FolmError("no key given")
+    try:
+        acc = nexus.validate(key)
+    except nexus.NexusError as e:
+        raise FolmError(str(e))
+    nexus.save_key(home(), key, acc)
+    print(f"Signed in as {acc['name']} ({'Premium' if acc['premium'] else 'free account'}). "
+          "The key is stored only on this PC.")
+
+
+def cmd_nexus_logout(a, m):
+    from folm_core import nexus
+    from folm_core.manager import home
+    nexus.forget_key(home())
+    print("Nexus API key removed from this PC.")
+
+
+def cmd_nxm(a, m):
+    from folm_core import nexus
+    from folm_core.manager import home
+    if not a.here and nexus.send_to_running_app(home(), a.url):
+        print("Sent to the open FOLM window.")
+        return
+    try:
+        link = nexus.parse(a.url)
+    except nexus.NexusError as e:
+        raise FolmError(str(e))
+    if link["edition"] != m.edition:
+        m = Manager(link["edition"])
+    path, name, source = m.nexus_download(a.url, log=print)
+    name, r = m.install(path, name, chooser=None if a.auto else terminal_chooser, log=print)
+    m.set_source(name, source)
+    print(f"Installed {name!r} ({r['type']}) in profile {m.active!r}. Run 'folm.py deploy'.")
+
+
 def cmd_add(a, m):
     m.add_folder(a.name)
     print(f"Added {a.name!r} to profile {m.active!r} (enabled).")
@@ -271,6 +313,22 @@ def cmd_preflight(a, m):
     print_preflight(items)
 
 
+def cmd_health(a, m):
+    from folm_core import health
+    findings = health.check(m)
+    icon = {"ok": "✔", "warn": "!", "error": "✖", "info": "i"}
+    for area in health.AREAS:
+        rows = [f for f in findings if f["area"] == area]
+        if rows:
+            print(area)
+        for f in rows:
+            print(f"  {icon[f['status']]} {f['text']}")
+            if f["fix"] and f["status"] != "ok":
+                print(f"      → {f['fix']}")
+    print(health.summary(findings) + ".")
+    return 1 if any(f["status"] == "error" for f in findings) else 0
+
+
 def cmd_play(a, m):
     items = m.preflight()
     if items:
@@ -349,6 +407,12 @@ def main(argv=None):
     s = sub.add_parser("play"); s.add_argument("--no-watch", action="store_true")
     s.add_argument("--force", action="store_true", help="play even if the pre-Play checks find problems")
     sub.add_parser("preflight", help="run the pre-Play checks")
+    sub.add_parser("nexus-login", help="store your Nexus personal API key on this PC")
+    sub.add_parser("nexus-logout", help="remove the stored Nexus API key")
+    s = sub.add_parser("nxm", help="download + install a Nexus 'Mod Manager Download' link")
+    s.add_argument("url"); s.add_argument("--auto", action="store_true", help="FOMOD: take the defaults")
+    s.add_argument("--here", action="store_true", help="don't hand the link to an open FOLM window")
+    sub.add_parser("health", help="check that mods are really working (files, plugins, last launch)")
     sub.add_parser("settings")
     s = sub.add_parser("set"); s.add_argument("key"); s.add_argument("value")
     s = sub.add_parser("geck"); s.add_argument("--edit", metavar="MOD")
@@ -363,9 +427,9 @@ def main(argv=None):
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "loot": cmd_loot, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "health": cmd_health, "nexus-login": cmd_nexus_login, "nexus-logout": cmd_nexus_logout, "nxm": cmd_nxm, "loot": cmd_loot, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
     try:
-        cmds[a.cmd](a, m)
+        sys.exit(cmds[a.cmd](a, m) or 0)
     except FolmError as e:
         sys.exit(f"folm: {e}")
 
