@@ -216,7 +216,21 @@ namespace fomm.Scripting
         public static DialogResult MessageBox(string message, string title) { return System.Windows.Forms.MessageBox.Show(message, title); }
         public static DialogResult MessageBox(string message, string title, MessageBoxButtons buttons) { return System.Windows.Forms.MessageBox.Show(message, title, buttons); }
         /// FOMM gave scripts an empty window to build their own installer UI on.
-        public static Form CreateCustomForm() { return new Form { StartPosition = FormStartPosition.CenterScreen }; }
+        /// Old installers were laid out for Windows' default UI font and ask for AutoScaleMode.Font
+        /// against 6x13. Linux fonts measure bigger, which stretched the layout off the window. So FOLM
+        /// picks a font size that measures like Windows' (scale factor 1): the author's layout, exactly.
+        public static Form CreateCustomForm()
+        {
+            var f = new Form { StartPosition = FormStartPosition.CenterScreen, AutoScaleMode = AutoScaleMode.Font };
+            var family = f.Font.FontFamily;
+            for (float size = f.Font.Size; size > 4f; size -= 0.25f)
+            {
+                f.Font = new System.Drawing.Font(family, size);
+                var d = f.CurrentAutoScaleDimensions;
+                if (d.Height <= 13.5f && d.Width <= 6.5f) break;
+            }
+            return f;
+        }
         public static void DisplayText(string text) { MessageBox(text); }
         public static void DisplayText(string text, string title) { MessageBox(text, title); }
 
