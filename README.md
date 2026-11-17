@@ -141,6 +141,8 @@ FOLM keeps two separate orders:
 
 ## Compatibility
 
+Problems other mod managers have, and how FOLM handles each: [docs/known-issues.md](docs/known-issues.md).
+
 Every mod tested with FOLM, and what happened: [docs/compatibility.md](docs/compatibility.md).
 
 ## Our mods
