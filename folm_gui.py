@@ -761,14 +761,40 @@ class Main(QMainWindow):
         self.run(self.m.geck, edit, then=done)
 
     def play(self):
+        def done(r):
+            if not r or not r["crashed"]:
+                return
+            box = QMessageBox(self)
+            box.setWindowTitle("The game crashed")
+            box.setIcon(QMessageBox.Warning)
+            box.setText("FOLM detected a crash or abnormal exit. What it found:\n\n" +
+                        "\n".join(f"• {f}" for f in r["findings"][:6]))
+            box.setInformativeText("The full report is saved on your PC (nothing is uploaded).")
+            open_btn = box.addButton("Open report", QMessageBox.ActionRole)
+            box.addButton(QMessageBox.Close)
+            box.exec()
+            if box.clickedButton() is open_btn:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(r["report"]))
+        self.run(self.m.play_watched, then=done)
+
+
+def install_error_reporter():
+    """Errors in FOLM itself become a saved report instead of vanishing."""
+    from folm_core import crash
+    from folm_core.manager import home as folm_home
+
+    def hook(t, e, tb):
+        path = crash.app_error_report(folm_home(), t, e, tb)
+        sys.__excepthook__(t, e, tb)
         try:
-            app = self.m.launch()
-            self.say(f"Launching Steam app {app}…")
-        except FolmError as e:
-            QMessageBox.warning(self, APP_NAME, str(e))
+            QMessageBox.critical(None, APP_NAME, f"FOLM hit an error. A report was saved:\n{path}")
+        except Exception:
+            pass
+    sys.excepthook = hook
 
 
 def main():
+    install_error_reporter()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")

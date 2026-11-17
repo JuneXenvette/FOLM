@@ -722,6 +722,32 @@ class Manager:
             self.deploy()
         return name
 
+    def latest_session(self):
+        d = os.path.join(self.dir, "sessions")
+        runs = sorted(os.listdir(d)) if os.path.isdir(d) else []
+        return os.path.join(d, runs[-1]) if runs else None
+
+    def crash_report(self, session=None):
+        """(Re)build the crash report for a play session (default: the latest). Returns (path, crashed, findings)."""
+        from . import crash
+        session = session or self.latest_session()
+        if not session:
+            raise FolmError("no play sessions recorded yet (launch with Play first)")
+        return crash.write_report(session, self.data["game_dir"])
+
+    def play_watched(self, log=_quiet, stop=None):
+        """Launch through Steam, watch the session, write a report when the game exits."""
+        from . import crash
+        session = crash.start(self)
+        self.launch()
+        log("Game launched; FOLM is watching for crashes...")
+        seen = crash.watch(session, stop=stop)
+        if not seen:
+            log("The game didn't seem to start within 3 minutes.")
+        path, crashed, findings = crash.write_report(session, self.data["game_dir"])
+        log(("Crash detected. " if crashed else "Game closed normally. ") + f"Report: {path}")
+        return {"report": path, "crashed": crashed, "findings": findings, "started": seen}
+
     def launch(self):
         """Start the game through Steam (Proton handles the rest)."""
         self.need()

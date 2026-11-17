@@ -88,6 +88,7 @@ other people's assets, you need their permission.
 | The GECK window is blank or tiny | Give it a few seconds — the first start under Proton is slow |
 | The GECK says it can't load multiple masters | Open it once through FOLM; FOLM adds the setting automatically |
 | Nothing was collected after closing | You probably didn't save, or saved over an existing file in edit mode — check the **Log** tab |
+| The game crashed | FOLM shows what it found right away; the full report is in `~/Games/FOLM/courier/sessions/` (nothing is uploaded). After a freeze + reboot, run `folm.py crash-report` |
 | The PC freezes on a low-RAM machine | Close browsers/chat apps first; consider installing `earlyoom` |
 
 Questions or broken mods: add them to [docs/compatibility.md](docs/compatibility.md)

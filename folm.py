@@ -22,7 +22,8 @@ Game
   folm.py loot [--update]             LOOT's warnings for your setup (--update: refresh the masterlist)
   folm.py conflicts [NAME]            which mods overwrite which files, and who wins
   folm.py catch                       move files the game/tools created into the Overwrite mod
-  folm.py play                        launch the game through Steam
+  folm.py play [--no-watch]           launch through Steam; FOLM watches and writes a crash report
+  folm.py crash-report                rebuild the report for the last play session (e.g. after a freeze)
 Making mods
   folm.py geck [--edit MOD]           open GECK with your mods; collect what you save when it closes
   folm.py keep NAME                   turn what you saved (Overwrite) into a new mod called NAME
@@ -248,7 +249,20 @@ def cmd_keep(a, m):
 
 
 def cmd_play(a, m):
-    print(f"Launching Steam app {m.launch()}...")
+    if a.no_watch:
+        print(f"Launching Steam app {m.launch()}...")
+        return
+    r = m.play_watched(log=print)
+    for f in r["findings"]:
+        print(f"  * {f}")
+
+
+def cmd_crash_report(a, m):
+    path, crashed, findings = m.crash_report()
+    print(f"{'Crash / abnormal exit' if crashed else 'No crash detected'} in the last session.")
+    for f in findings:
+        print(f"  * {f}")
+    print(f"Report: {path}")
 
 
 def cmd_convert_check(a, m):
@@ -275,8 +289,9 @@ def main(argv=None):
     s = sub.add_parser("category"); s.add_argument("name"); s.add_argument("category")
     s = sub.add_parser("profile"); s.add_argument("action", choices=["list", "create", "switch", "delete"])
     s.add_argument("name", nargs="?"); s.add_argument("--copy-from")
-    for c in ("deploy", "undeploy", "order", "catch", "play"):
+    for c in ("deploy", "undeploy", "order", "catch", "crash-report"):
         sub.add_parser(c)
+    s = sub.add_parser("play"); s.add_argument("--no-watch", action="store_true")
     s = sub.add_parser("geck"); s.add_argument("--edit", metavar="MOD")
     s = sub.add_parser("keep"); s.add_argument("name")
     s = sub.add_parser("loot"); s.add_argument("--update", action="store_true")
@@ -289,7 +304,7 @@ def main(argv=None):
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "loot": cmd_loot, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "loot": cmd_loot, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
     try:
         cmds[a.cmd](a, m)
     except FolmError as e:
