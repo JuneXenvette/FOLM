@@ -38,19 +38,19 @@ may be dated; each item is something FOLM should handle, test, or warn about.
 
 | Problem | FOLM |
 |---|---|
-| **Verifying game files in Steam undoes the 4GB patch** (and other exe/BSA patches) | ⏳ **To do:** pre-Play check that the exe is still patched; offer to re-patch |
+| **Verifying game files in Steam undoes the 4GB patch** (and other exe/BSA patches) | ✅ Pre-Play check reads the exe's 4GB flag and warns if it's gone. **To do:** offer to re-patch |
 | The game launcher rewrites `Fallout.ini` with defaults | ✅ FOLM writes its settings to `FalloutCustom.ini` when JIP LN is present |
 | **Alt-tab crashes / the window vanishes**: caused by an NVTF setting that keeps textures out of RAM; fixed by windowed mode or DXVK | ✅ Matches what happened on this PC; windowed mode fixed it. **To do:** setup wizard should default Linux players to windowed |
-| **Bouncing NPCs / sped-up game**: frame rate above ~120 breaks the physics | ⏳ **To do:** with V-Sync off, set an FPS cap (NVTF supports one) in the setup wizard |
-| "Application load error 65434": Steam wasn't running | ⏳ **To do:** pre-Play check that Steam is running |
+| **Bouncing NPCs / sped-up game**: frame rate above ~120 breaks the physics | ✅ FPS cap setting (default 120) written to DXVK's `dxvk.conf`; NVTF has no limiter of its own. Pre-Play warns if V-Sync is off with no cap |
+| "Application load error 65434": Steam wasn't running | ✅ Pre-Play check |
 | "Plugin reported as incompatible during query" in logs | ✅ Harmless (a game plugin seen by GECK or the other way round); crash reports shouldn't flag it |
 
 ## Mod-vs-mod problems
 
 | Problem | FOLM |
 |---|---|
-| **Removing mods mid-playthrough** breaks saves (quests and scripts stay in the save) | ⏳ **To do:** read the plugin list stored in each save and warn before disabling a mod a save depends on |
-| Old saves don't work with a big new mod list | ⏳ **To do:** per-profile saves, so each setup keeps its own saves |
+| **Removing mods mid-playthrough** breaks saves (quests and scripts stay in the save) | ✅ FOLM reads the plugin list in each save and warns before you disable a mod your recent saves use, after deploy, and before Play |
+| Old saves don't work with a big new mod list | ✅ Per-profile saves (`SLocalSavePath`); the Default profile keeps the normal Saves folder |
 | Script-heavy mods cause save bloat (e.g. Project Nevada, spawn mods using PlaceAtMe) | ✅ LOOT warnings; compatibility list. Could add a "known heavy" note |
 | Blindly cleaning plugins with FNVEdit can remove edits a mod needs and *cause* crashes | ✅ FOLM shows LOOT's cleaning notes but never cleans automatically |
 | Missing masters, wrong load order, incompatible mods | ✅ Master checks, LOOT sorting and warnings, crash reports |

@@ -114,6 +114,21 @@ On by default (**⚙ Settings** in the app). On deploy FOLM redates the game's a
 is installed, otherwise into the game's `Fallout.ini` (backed up first). Undeploy restores the exact previous
 values. No dummy archive needed.
 
+## Saves, FPS cap and pre-Play checks
+
+- **Save safety:** FOLM reads the plugin list stored in each save. Untick a mod your recent saves use and it
+  warns you first (removing mods mid-playthrough breaks quests and scripts). Deploy and Play warn too.
+- **Per-profile saves** (on by default): each profile keeps its saves in `Saves/<profile>/`, so a test setup
+  never mixes with your playthrough. The Default profile keeps the normal `Saves` folder.
+- **FPS cap** (default 120): above ~120 FPS these engines' physics break (bouncing NPCs, sped-up game).
+  NVTF and Stewie's Tweaks don't include a limiter, so FOLM sets one in DXVK, the Direct3D layer Proton uses:
+  `d3d9.maxFrameRate` in the game folder's `dxvk.conf`. Any existing `dxvk.conf` is backed up and restored on undeploy.
+- **Before ▶ Play** FOLM checks: mods deployed, Steam running, the exe still 4GB-patched (verifying files in
+  Steam undoes it), xNVSE present when NVSE plugins are, missing masters, LOOT errors, saves that need
+  plugins that are now off, and V-Sync off with no FPS cap. Problems show in one box: Play anyway or Cancel.
+
+All of these are in the app's **⚙ Settings** menu; every change is undone exactly on undeploy.
+
 ## Load order & LOOT
 
 FOLM keeps two separate orders:
@@ -203,6 +218,9 @@ python3 folm.py category NAME "Visuals"      # override a mod's section ('auto' 
 python3 folm.py convert-check SomeFO3Mod.esp  # what converting a Fallout 3 plugin to TTW needs
 python3 folm.py settings                      # e.g. archive invalidation (app: ⚙ Settings menu)
 python3 folm.py set archive-invalidation on   # loose mod files override the game's archives (default on)
+python3 folm.py set fps-cap 120                # or off; written to dxvk.conf on deploy
+python3 folm.py set profile-saves on          # each profile keeps its own saves
+python3 folm.py preflight                     # the pre-Play checks (play runs them too; --force to skip)
 ```
 
 Add `--edition wanderer` for Fallout 3. Profiles, staged mods and backups live in `~/Games/FOLM` (override with `FOLM_HOME`).

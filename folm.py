@@ -106,6 +106,13 @@ def cmd_list(a, m):
 
 
 def cmd_toggle(a, m, on):
+    if not on:
+        need = m.saves_needing(m.mod_plugins(a.name))
+        if need and not a.force:
+            for save, used in need:
+                print(f"  ! Save '{save}' uses {', '.join(used)}")
+            raise FolmError(f"{a.name!r} is used by your recent saves; removing it mid-playthrough can break "
+                            "quests and scripts. Use --force to disable it anyway.")
     m.set_enabled(a.name, on)
     print(f"{'Enabled' if on else 'Disabled'} {a.name!r}. Run 'folm.py deploy' to apply.")
 
@@ -179,6 +186,8 @@ def cmd_deploy(a, m):
         print_loot(errs)
     if r["problems"]:
         print("  Fix the problems above before playing.")
+    for save, miss in r.get("save_warnings", []):
+        print(f"  ! Save '{save}' needs {', '.join(miss)}, which isn't active now.")
 
 
 def cmd_undeploy(a, m):
@@ -250,7 +259,25 @@ def cmd_keep(a, m):
     print(f"Made mod {m.keep_as_mod(a.name)!r} (in 'Our mods'). It's enabled and deployed.")
 
 
+def print_preflight(items):
+    for sev, msg in items:
+        print(f"  {'✖' if sev == 'error' else '!'} {msg}")
+
+
+def cmd_preflight(a, m):
+    items = m.preflight()
+    if not items:
+        print("All checks passed. Ready to play.")
+    print_preflight(items)
+
+
 def cmd_play(a, m):
+    items = m.preflight()
+    if items:
+        print("Before you play:")
+        print_preflight(items)
+        if any(sev == "error" for sev, _ in items) and not a.force:
+            raise FolmError("fix the problems marked ✖, or use --force to play anyway")
     if a.no_watch:
         print(f"Launching Steam app {m.launch()}...")
         return
@@ -262,15 +289,23 @@ def cmd_play(a, m):
 def cmd_settings(a, m):
     m.need()
     for key, (default, label) in m.SETTINGS.items():
-        print(f"  {key.replace('_', '-'):24} {'on' if m.setting(key) else 'off':4} {label}")
+        v = m.setting(key)
+        shown = ("on" if v else "off") if isinstance(v, bool) else (str(v) if v else "off")
+        print(f"  {key.replace('_', '-'):24} {shown:4} {label}")
 
 
 def cmd_set(a, m):
     m.need()
     key = a.key.replace("-", "_")
-    if a.value.lower() not in ("on", "off"):
-        raise FolmError("use on or off")
-    m.set_setting(key, a.value.lower() == "on")
+    if key not in m.SETTINGS:
+        raise FolmError(f"unknown setting; choose from: {', '.join(k.replace('_', '-') for k in m.SETTINGS)}")
+    v = a.value.lower()
+    if isinstance(m.SETTINGS[key][0], bool):
+        if v not in ("on", "off"):
+            raise FolmError("use on or off")
+        m.set_setting(key, v == "on")
+    else:
+        m.set_setting(key, 0 if v == "off" else v)
     print(f"{a.key} is now {a.value.lower()}.")
     if m.deployed:
         m.deploy(log=print)
@@ -301,6 +336,7 @@ def main(argv=None):
     sub.add_parser("list")
     s = sub.add_parser("enable"); s.add_argument("name")
     s = sub.add_parser("disable"); s.add_argument("name")
+    s.add_argument("--force", action="store_true", help="disable even if recent saves use it")
     s = sub.add_parser("move"); s.add_argument("name"); s.add_argument("--after", required=True)
     s = sub.add_parser("note"); s.add_argument("name"); s.add_argument("text")
     s = sub.add_parser("tag"); s.add_argument("name"); s.add_argument("tags", nargs="+")
@@ -311,6 +347,8 @@ def main(argv=None):
     for c in ("deploy", "undeploy", "order", "catch", "crash-report"):
         sub.add_parser(c)
     s = sub.add_parser("play"); s.add_argument("--no-watch", action="store_true")
+    s.add_argument("--force", action="store_true", help="play even if the pre-Play checks find problems")
+    sub.add_parser("preflight", help="run the pre-Play checks")
     sub.add_parser("settings")
     s = sub.add_parser("set"); s.add_argument("key"); s.add_argument("value")
     s = sub.add_parser("geck"); s.add_argument("--edit", metavar="MOD")
@@ -325,7 +363,7 @@ def main(argv=None):
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "loot": cmd_loot, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "loot": cmd_loot, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
     try:
         cmds[a.cmd](a, m)
     except FolmError as e:

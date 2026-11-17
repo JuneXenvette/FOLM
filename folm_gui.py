@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, Signal, Slot, QUrl                    # noqa: E402
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPixmap, QShortcut      # noqa: E402
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPixmap, QShortcut      # noqa: E402
 from PySide6.QtWidgets import (                                         # noqa: E402
     QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView, QRadioButton, QScrollArea,
@@ -249,7 +249,18 @@ class Main(QMainWindow):
         self.settings_btn.setPopupMode(QToolButton.InstantPopup)
         self.settings_menu = QMenu(self)
         self.setting_actions = {}
+        self.fps_actions = {}
         for key, (default, label) in Manager.SETTINGS.items():
+            if key == "fps_cap":
+                sub = self.fps_menu = self.settings_menu.addMenu("FPS cap (keeps physics stable with V-Sync off)")
+                group = self.fps_group = QActionGroup(self)
+                for val in (0, 60, 90, 120, 144):
+                    a = sub.addAction("Off" if not val else f"{val} FPS" + ("  (recommended)" if val == 120 else ""))
+                    a.setCheckable(True)
+                    group.addAction(a)
+                    a.triggered.connect(lambda _c=False, v=val: self.change_setting("fps_cap", v))
+                    self.fps_actions[val] = a
+                continue
             act = self.settings_menu.addAction(label)
             act.setCheckable(True)
             act.toggled.connect(lambda on, k=key: self.change_setting(k, on))
@@ -396,6 +407,16 @@ class Main(QMainWindow):
             act.blockSignals(True)
             act.setChecked(bool(m.setting(key)))
             act.blockSignals(False)
+        cap = int(m.setting("fps_cap") or 0)
+        if cap not in self.fps_actions:                 # a custom value set from the CLI
+            a = self.fps_actions[cap] = self.fps_menu.addAction(f"{cap} FPS")
+            a.setCheckable(True)
+            self.fps_group.addAction(a)
+            a.triggered.connect(lambda _c=False, v=cap: self.change_setting("fps_cap", v))
+        for v, a in self.fps_actions.items():
+            a.blockSignals(True)
+            a.setChecked(v == cap)
+            a.blockSignals(False)
         for p in m.profiles():
             self.profile.addItem(p)
         self.profile.setCurrentText(m.active)
@@ -546,6 +567,8 @@ class Main(QMainWindow):
                                 "\n".join(r["problems"][:10]))
         elif r:
             self.say(f"Ready to play: {len(r['active'])} active plugin(s).")
+        for save, miss in (r or {}).get("save_warnings", []):
+            self.say(f"⚠ Save '{save}' needs {', '.join(miss)}, which isn't active now.")
 
     # ---------------------------------------------------------------- handlers
     def on_edition(self, i):
@@ -575,7 +598,22 @@ class Main(QMainWindow):
     def on_mod_checked(self, it, col):
         if self.loading or col != 0 or is_header(it) or it.text(0) == self.m.overwrite_name:
             return
-        self.m.set_enabled(it.text(0), it.checkState(0) == Qt.Checked)
+        name, on = it.text(0), it.checkState(0) == Qt.Checked
+        if not on:
+            need = self.m.saves_needing(self.m.mod_plugins(name))
+            if need:
+                lines = "\n".join(f"• {save}: {', '.join(used)}" for save, used in need)
+                ans = QMessageBox.warning(
+                    self, "Your saves use this mod",
+                    f"Your recent saves use {name}:\n\n{lines}\n\nRemoving a mod mid-playthrough can break "
+                    "quests and scripts in those saves. Start a new game (or a new profile) to play without it.\n\n"
+                    "Disable it anyway?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if ans != QMessageBox.Yes:
+                    self.loading = True
+                    it.setCheckState(0, Qt.Checked)
+                    self.loading = False
+                    return
+        self.m.set_enabled(name, on)
         self.refresh()
 
     def on_reorder(self):
@@ -758,7 +796,8 @@ class Main(QMainWindow):
         if self.loading:
             return
         self.m.set_setting(key, on)
-        self.say(f"{Manager.SETTINGS[key][1]}: {'on' if on else 'off'}.")
+        shown = ("on" if on else "off") if isinstance(on, bool) else (f"{on}" if on else "off")
+        self.say(f"{Manager.SETTINGS[key][1]}: {shown}.")
         if self.m.deployed:
             self.run(self.m.deploy)            # apply it right away (deploy is quick)
 
@@ -785,6 +824,26 @@ class Main(QMainWindow):
         self.run(self.m.geck, edit, then=done)
 
     def play(self):
+        try:
+            items = self.m.preflight()
+        except FolmError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return
+        if items:
+            errors = any(sev == "error" for sev, _ in items)
+            box = QMessageBox(self)
+            box.setWindowTitle("Before you play")
+            box.setIcon(QMessageBox.Warning if errors else QMessageBox.Information)
+            box.setText(("FOLM found problems that will probably stop the game working:"
+                         if errors else "A few things to know before you play:") + "\n\n" +
+                        "\n".join(f"{'✖' if sev == 'error' else '•'} {msg}" for sev, msg in items[:8]))
+            go = box.addButton("Play anyway", QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.setDefaultButton(QMessageBox.Cancel if errors else go)
+            box.exec()
+            if box.clickedButton() is not go:
+                return
+
         def done(r):
             if not r or not r["crashed"]:
                 return

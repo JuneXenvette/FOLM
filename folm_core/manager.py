@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import struct
 import tempfile
 import time
 import glob
@@ -549,6 +550,7 @@ class Manager:
     # ------------------------------------------------------------ game
     def deploy(self, log=_quiet):
         self.need()
+        self._game_settings(apply=False)          # undo the last run's INI/dxvk changes first (never caught as strays)
         if os.path.exists(self.lo_state):
             loadorder.restore(self.plugins_txt, self.lo_state, log=_quiet)
         names = self.enabled()
@@ -563,18 +565,21 @@ class Manager:
         order, active, problems = loadorder.apply(self.data_dir, self.plugins_txt, self.cur["plugin_order"],
                                                   self.cur["disabled_plugins"], self.edition, self.lo_state,
                                                   log=log, rules=rules, redate_bsas=invalidate)
-        self._archive_invalidation(invalidate, log)
-        return {"order": order, "active": active, "problems": problems, "loot": lc[2] if lc else []}
+        self._game_settings(apply=True, log=log)
+        return {"order": order, "active": active, "problems": problems, "loot": lc[2] if lc else [],
+                "save_warnings": self.save_warnings(active)}
 
     def undeploy(self, log=_quiet):
         self.need()
-        self._archive_invalidation(False, log)
+        self._game_settings(apply=False, log=log)
         loadorder.restore(self.plugins_txt, self.lo_state, log=log)
         dep.undeploy(self.manifest, log=log, overwrite_dir=self.overwrite_dir)
 
     # ------------------------------------------------------------ settings
     SETTINGS = {
         "archive_invalidation": (True, "Archive invalidation: loose mod files override the game's archives"),
+        "profile_saves": (True, "Separate saves per profile (the Default profile keeps the normal Saves folder)"),
+        "fps_cap": (120, "FPS cap through DXVK, keeps physics stable with V-Sync off (0 = off)"),
     }
 
     def setting(self, key):
@@ -583,6 +588,16 @@ class Manager:
     def set_setting(self, key, value):
         if key not in self.SETTINGS:
             raise FolmError(f"unknown setting {key!r}; choose from: {', '.join(self.SETTINGS)}")
+        default = self.SETTINGS[key][0]
+        if isinstance(default, bool):
+            value = bool(value)
+        elif isinstance(default, int):
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                raise FolmError(f"{key} needs a number")
+            if value < 0 or value > 1000:
+                raise FolmError(f"{key} must be between 0 and 1000")
         self.data.setdefault("settings", {})[key] = value
         self.save()
 
@@ -593,32 +608,153 @@ class Manager:
         return os.path.join(self.data["prefix"], "pfx/drive_c/users/steamuser/Documents/My Games",
                             os.path.basename(game_info(self.edition)["ini_dir"]))
 
-    def _archive_invalidation(self, on, log=_quiet):
-        """Write (on) or undo (off) the [Archive] keys, reversibly.
+    def _profile_save_folder(self):
+        """Saves subfolder for this profile (None = the game's normal Saves folder)."""
+        if not self.setting("profile_saves") or self.active == "Default":
+            return None
+        return re.sub(r'[\\/:*?"<>|]', "_", self.active)
 
-        With JIP LN installed the keys go in FalloutCustom.ini (the launcher never
-        rewrites it); otherwise in the game's own INI, after a one-time backup.
+    def save_dir(self):
+        sub = self._profile_save_folder()
+        base = os.path.join(self.ini_dir(), "Saves")
+        return os.path.join(base, sub) if sub else base
+
+    def _game_settings(self, apply, log=_quiet):
+        """Write (apply) or undo FOLM's game settings, reversibly.
+
+        - archive invalidation: [Archive] keys in FalloutCustom.ini (JIP LN) or Fallout.ini
+        - per-profile saves:    [General] SLocalSavePath in Fallout.ini
+        - FPS cap:              d3d9.maxFrameRate in the game folder's dxvk.conf
+        Fallout.ini and an existing dxvk.conf are backed up before FOLM first touches them.
         """
         from . import ini
-        if os.path.exists(self.ini_state):                 # undo the last change first
+        if os.path.exists(self.ini_state):
             st = json.load(open(self.ini_state))
-            ini.restore_keys(st["path"], "Archive", st["previous"])
+            entries = st.get("ini") or ([{"path": st["path"], "section": "Archive", "previous": st["previous"]}]
+                                        if "path" in st else [])
+            for e in reversed(entries):
+                ini.restore_keys(e["path"], e["section"], e["previous"])
+            for f in st.get("files", []):
+                if f.get("backup") and os.path.exists(f["backup"]):
+                    shutil.move(f["backup"], f["path"])
+                elif os.path.exists(f["path"]):
+                    os.remove(f["path"])
             os.remove(self.ini_state)
-        if not on:
-            return None
+        if not apply:
+            return
+        st, done = {"ini": [], "files": []}, []
         jip = dep.exists_ci(self.data_dir, "NVSE/Plugins/jip_nvse.dll")
-        game_ini = "Fallout.ini"
-        target = os.path.join(self.ini_dir(), "FalloutCustom.ini" if jip else game_ini)
-        if not jip and os.path.exists(target):
-            bak = os.path.join(self.dir, "backups", game_ini + ".folm-backup")
-            if not os.path.exists(bak):
+        custom = os.path.join(self.ini_dir(), "FalloutCustom.ini")
+        game_ini = os.path.join(self.ini_dir(), "Fallout.ini")
+
+        def edit(path, section, keys):
+            if path == game_ini and os.path.exists(path):
+                bak = os.path.join(self.dir, "backups", "Fallout.ini.folm-backup")
+                if not os.path.exists(bak):
+                    os.makedirs(os.path.dirname(bak), exist_ok=True)
+                    shutil.copy2(path, bak)
+            st["ini"].append({"path": path, "section": section, "previous": ini.set_keys(path, section, keys)})
+
+        if self.setting("archive_invalidation"):
+            edit(custom if jip else game_ini, "Archive", self.ARCHIVE_KEYS)
+            done.append(f"archive invalidation ({'FalloutCustom.ini' if jip else 'Fallout.ini'})")
+        sub = self._profile_save_folder()
+        if sub:
+            os.makedirs(self.save_dir(), exist_ok=True)
+            edit(game_ini, "General", {"SLocalSavePath": f"Saves\\{sub}\\"})
+            done.append(f"saves in Saves/{sub}")
+        cap = int(self.setting("fps_cap") or 0)
+        if cap > 0:
+            conf = os.path.join(self.data["game_dir"], "dxvk.conf")
+            bak = None
+            lines = []
+            if os.path.exists(conf):
+                bak = os.path.join(self.dir, "backups", "dxvk.conf.folm-backup")
                 os.makedirs(os.path.dirname(bak), exist_ok=True)
-                shutil.copy2(target, bak)
-        previous = ini.set_keys(target, "Archive", self.ARCHIVE_KEYS)
+                shutil.copy2(conf, bak)
+                lines = [l for l in open(conf).read().splitlines() if not l.strip().startswith("d3d9.maxFrameRate")]
+            lines.append(f"d3d9.maxFrameRate = {cap}")
+            with open(conf, "w") as fh:
+                fh.write("\n".join(lines) + "\n")
+            st["files"].append({"path": conf, "backup": bak})
+            done.append(f"FPS cap {cap}")
         with open(self.ini_state, "w") as fh:
-            json.dump({"path": target, "previous": previous}, fh, indent=1)
-        log(f"Archive invalidation on ({os.path.basename(target)}).")
-        return target
+            json.dump(st, fh, indent=1)
+        if done:
+            log("Game settings: " + ", ".join(done) + ".")
+
+    # ------------------------------------------------------------ saves + pre-Play checks
+    def save_warnings(self, active=None):
+        """[(save, [plugins it needs that won't be active])] for this profile's newest saves."""
+        from . import saves
+        if active is None:
+            rows, _ = self.plugin_order()
+            active = [n for n, on, _, _ in rows if on]
+        return saves.check(self.save_dir(), active)
+
+    def saves_needing(self, plugins):
+        """Newest saves (of this profile) that use any of these plugins: [(save, [plugins])]."""
+        from . import saves
+        want = {p.lower() for p in plugins}
+        out = []
+        for path, _ in saves.list_saves(self.save_dir())[:3]:
+            used = [p for p in (saves.plugins_in_save(path) or []) if p.lower() in want]
+            if used:
+                out.append((os.path.basename(path), used))
+        return out
+
+    def mod_plugins(self, name):
+        """Plugin files at the top of a staged mod's folder."""
+        d = os.path.join(self.mods_dir, name)
+        return sorted(f for f in os.listdir(d) if f.lower().endswith((".esm", ".esp"))) if os.path.isdir(d) else []
+
+    def _exe_is_4gb(self):
+        exe = os.path.join(self.data["game_dir"], game_info(self.edition)["exe"])
+        try:
+            with open(exe, "rb") as fh:
+                d = fh.read(4096)
+            pe = struct.unpack_from("<I", d, 0x3C)[0]
+            return bool(struct.unpack_from("<H", d, pe + 22)[0] & 0x20)
+        except (OSError, struct.error):
+            return None
+
+    def preflight(self):
+        """Checks before Play: [(severity, message)], severity 'error' or 'warn'."""
+        self.need()
+        out = []
+        if not self.deployed:
+            out.append(("warn", "Your mods aren't deployed, so the game will start without them."))
+        if subprocess.run(["pgrep", "-x", "steam"], capture_output=True).returncode != 0:
+            out.append(("warn", "Steam isn't running. FOLM will try to start it, but the game may show "
+                                "'Application load error 65434' if Steam isn't ready."))
+        if self._exe_is_4gb() is False and dep.exists_ci(self.data_dir, "NVSE/Plugins") is not None:
+            out.append(("error", f"{game_info(self.edition)['exe']} isn't 4GB-patched any more (verifying files in "
+                                 "Steam undoes it). Re-run the 4GB patcher, or xNVSE and its plugins won't load."))
+        plugins_dir = dep.exists_ci(self.data_dir, "NVSE/Plugins")
+        if plugins_dir and any(f.lower().endswith(".dll") for f in os.listdir(plugins_dir)) \
+                and not dep.exists_ci(self.data["game_dir"], "nvse_steam_loader.dll"):
+            out.append(("error", "NVSE plugins are installed but xNVSE isn't: they won't load."))
+        if self.deployed:
+            rows, problems = self.plugin_order()
+            missing, other = {}, []
+            for p in problems:
+                mm = re.match(r"(.+?) needs missing master (.+)$", p)
+                (missing.setdefault(mm.group(1), []).append(mm.group(2)) if mm else other.append(p))
+            out += [("error", f"{pl} needs missing master{'s' if len(ms) > 1 else ''}: {', '.join(ms)}")
+                    for pl, ms in missing.items()] + [("error", p) for p in other]
+            out += [("error", f"LOOT: {pl + ': ' if pl else ''}{t}")
+                    for sev, pl, t in getattr(self, "last_loot_messages", []) if sev == "error"]
+            for save, miss in self.save_warnings([n for n, on, _, _ in rows if on]):
+                out.append(("warn", f"Save '{save}' uses {', '.join(miss[:4])}{' …' if len(miss) > 4 else ''}, "
+                                    "which won't be loaded. Loading it can break quests and scripts."))
+        if not int(self.setting("fps_cap") or 0):
+            from . import ini
+            vsync = ini.get(os.path.join(self.ini_dir(), "FalloutCustom.ini"), "Display", "iPresentInterval") \
+                or ini.get(os.path.join(self.ini_dir(), "FalloutPrefs.ini"), "Display", "iPresentInterval")
+            if vsync == "0":
+                out.append(("warn", "V-Sync is off and there's no FPS cap: above ~120 FPS physics can break "
+                                    "(bouncing NPCs). Turn on the FPS cap in Settings."))
+        return out
 
     def catch(self, log=_quiet):
         self.need()
