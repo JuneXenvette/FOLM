@@ -114,6 +114,15 @@ On by default (**⚙ Settings** in the app). On deploy FOLM redates the game's a
 is installed, otherwise into the game's `Fallout.ini` (backed up first). Undeploy restores the exact previous
 values. No dummy archive needed.
 
+## Recommended mods
+
+For a smooth game on Linux, start with the engine and stability mods in
+**[docs/recommended-mods.md](docs/recommended-mods.md)**: xNVSE, the 4GB Patcher, JIP LN, JohnnyGuitar,
+ShowOff, NVTF, lStewieAl's Tweaks and Engine Optimizations, the lag and save-bloat fixes, Mod Limit Fix,
+kNVSE, UIO, a crash logger and YUP (YUPTTW for TTW). Fallout 3 has its own list (FOSE, Anniversary
+Patcher, Command Extender, High FPS Physics Fix…). The page also covers the Linux-only part (FPS cap,
+windowed mode, low RAM) and what to avoid. Lists follow ModdingLinked's community guides.
+
 ## Saves, FPS cap and pre-Play checks
 
 - **Save safety:** FOLM reads the plugin list stored in each save. Untick a mod your recent saves use and it

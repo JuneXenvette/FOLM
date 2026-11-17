@@ -26,7 +26,7 @@ Fallout 3 GOTY, GE-Proton10-34, FOLM v0.3.
 | Perk Per Level | 1.0 | Nexus 66347 | data | ✅ | ⏳ | Gameplay change (perk every level) |
 | kNVSE Animation Plugin | 37 | Nexus 71336 | data | ✅ | ⏳ | TTW guide essential |
 | NVTF – New Vegas Tick Fix | 10.61 (+ INI 1.06) | Nexus 66537 | data | ✅ | ⏳ | Needed with V-Sync off |
-| Yvile's Crash Logger | 3.0 | Nexus 72317 | data | ✅ | ⏳ | Modern replacement for NVAC |
+| Crash Logger (writes CobbCrashLogger.log) | 3.0 | Nexus 72317 | data | ✅ | ⏳ | Replacement for NVAC. The guides now recommend the newer Yvile's Crash Logger (Nexus 82540), not tested yet |
 | GECK (New Vegas Edition) | 1.4 | user's zip (copied Geck.exe + ssce5432.dll into the game folder) | tool | ✅ | ✅ opens via FOLM's 🛠 GECK button | Launched through xNVSE's editor loader (`nvse_loader.exe -editor`) in the game's Proton prefix; FOLM sets bAllowMultipleMasterLoads=1. Capturing saved work not yet tested with the real GECK |
 | Project Nevada | 2.5 | Nexus 40040 | fomod-csharp (old FOMM script) | ✅ (FOLM legacy installer: Mono + FOMM shim + bubblewrap sandbox) | ⏳ not deployed (Testing profile only; not for TTW) | The mod's own WinForms installer ran natively. Needed: `CreateCustomForm` in the shim; font-matched scaling (layout was stretched off-window). Patched the player's current start_menu.xml (+5 lines) like FOMM did. 756 files, 16 duplicate-case folders merged. Community Safe Modding list advises against using it in a modern setup |
 
