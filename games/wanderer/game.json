@@ -1,0 +1,14 @@
+{
+  "edition": "Wanderer",
+  "game": "Fallout 3: Game of the Year Edition",
+  "steam_app_id": 22370,
+  "install_dir": "Fallout 3 goty",
+  "exe": "Fallout3.exe",
+  "data_dir": "Data",
+  "prefix_appdata": "pfx/drive_c/users/steamuser/AppData/Local/Fallout3",
+  "ini_dir": "pfx/drive_c/users/steamuser/Documents/My Games/Fallout3",
+  "script_extender": {"name": "FOSE", "source": "official FOSE site"},
+  "memory_patch": "Fallout 3 large-address-aware patch",
+  "editor": {"name": "GECK (Fallout 3)"},
+  "known_quirks": ["Games for Windows Live leftovers on some versions"]
+}

@@ -1,0 +1,606 @@
+"""manager - the FOLM engine API shared by the command line (folm.py) and the app (folm_gui.py).
+
+Everything here returns data or raises FolmError; nothing prints or exits, so a
+GUI can call it directly and show results however it likes.
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+
+from . import deploy as dep, detect, fomod, loadorder
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STEAM = os.path.expanduser("~/.local/share/Steam")
+OVERWRITE = "Overwrite"
+EDITIONS = ("courier", "wanderer")
+
+# Mod list sections, in load order. "Sort mods" arranges by these. The order follows
+# the community-standard New Vegas guide structure (Utilities, Bug Fixes, User Interface,
+# Content, Gameplay, Visuals), with TTW / the base game first and our own mods after.
+CATEGORIES = ["Base game & TTW", "Utilities & engine", "Bug fixes", "UI & menus",
+              "Content", "Gameplay", "Visuals", "Our mods", "Other"]
+TAG_CATEGORY = [("ours", "Our mods"), ("visuals", "Visuals"), ("gameplay", "Gameplay"),
+                ("ui", "UI & menus"), ("fixes", "Bug fixes"), ("engine", "Utilities & engine"),
+                ("ini", "Utilities & engine"), ("ttw", "Base game & TTW")]
+BASE_PLUGINS = {"falloutnv.esm", "fallout3.esm", "taleoftwowastelands.esm"}
+
+
+class FolmError(Exception):
+    pass
+
+
+def home():
+    return os.path.expanduser(os.environ.get("FOLM_HOME", "~/Games/FOLM"))
+
+
+def game_info(edition):
+    with open(os.path.join(HERE, "games", edition, "game.json")) as fh:
+        return json.load(fh)
+
+
+def steam_libraries():
+    libs = [os.path.join(STEAM, "steamapps")]
+    vdf = os.path.join(STEAM, "steamapps", "libraryfolders.vdf")
+    if os.path.exists(vdf):
+        for m in re.finditer(r'"path"\s+"([^"]+)"', open(vdf).read()):
+            p = os.path.join(m.group(1), "steamapps")
+            if p not in libs:
+                libs.append(p)
+    return libs
+
+
+def empty_profile():
+    return {"mods": [], "plugin_order": [], "disabled_plugins": []}
+
+
+def _quiet(*a):
+    pass
+
+
+class Manager:
+    """One edition's setup: game paths, named profiles, staged mods."""
+
+    def __init__(self, edition="courier"):
+        if edition not in EDITIONS:
+            raise FolmError(f"unknown edition {edition!r}")
+        self.edition = edition
+        self.dir = os.path.join(home(), edition)
+        self.path = os.path.join(self.dir, "profile.json")
+        self.data = {}
+        self._mtime = None
+        if os.path.exists(self.path):
+            self._load()
+            if "profiles" not in self.data:          # upgrade a v0.1 file
+                self.data["profiles"] = {"Default": {k: self.data.pop(k, []) for k in empty_profile()}}
+                self.data["active"] = "Default"
+                self.save()
+            old = os.path.join(self.mods_dir, OVERWRITE)  # early shared Overwrite -> Default's
+            if os.path.isdir(old) and not os.path.exists(os.path.join(self.mods_dir, f"{OVERWRITE} [Default]")):
+                os.rename(old, os.path.join(self.mods_dir, f"{OVERWRITE} [Default]"))
+
+    # ------------------------------------------------------------ state
+    def _load(self):
+        with open(self.path) as fh:
+            self.data = json.load(fh)
+        self._mtime = os.stat(self.path).st_mtime_ns
+
+    def sync(self):
+        """Re-read profile.json if another FOLM (CLI or app) changed it since we last read/wrote it."""
+        try:
+            if os.stat(self.path).st_mtime_ns != self._mtime:
+                self._load()
+        except FileNotFoundError:
+            pass
+
+    @property
+    def ready(self):
+        return bool(self.data.get("game_dir"))
+
+    def need(self):
+        self.sync()
+        if not self.ready:
+            raise FolmError(f"No {self.edition} setup yet. Run init first.")
+        return self
+
+    @property
+    def cur(self):
+        self.sync()
+        return self.data["profiles"][self.data["active"]]
+
+    @property
+    def active(self):
+        return self.data.get("active")
+
+    def save(self):
+        os.makedirs(self.dir, exist_ok=True)
+        with open(self.path, "w") as fh:
+            json.dump(self.data, fh, indent=1)
+        self._mtime = os.stat(self.path).st_mtime_ns
+
+    mods_dir = property(lambda s: os.path.join(s.dir, "mods"))
+    manifest = property(lambda s: os.path.join(s.dir, "deployed.json"))
+    lo_state = property(lambda s: os.path.join(s.dir, "loadorder-state.json"))
+    backups = property(lambda s: os.path.join(s.dir, "backups", "overwritten"))
+    overwrite_name = property(lambda s: f"{OVERWRITE} [{s.data['active']}]")
+    overwrite_dir = property(lambda s: os.path.join(s.mods_dir, s.overwrite_name))
+    data_dir = property(lambda s: os.path.join(s.data["game_dir"], s.data["data_dir"]))
+    plugins_txt = property(lambda s: os.path.join(s.data["prefix"], s.data["plugins_txt"]))
+
+    @property
+    def deployed(self):
+        return os.path.exists(self.manifest)
+
+    def mods(self):
+        return self.cur["mods"]
+
+    def mod(self, name):
+        for m in self.cur["mods"]:
+            if m["name"].lower() == name.lower():
+                return m
+        raise FolmError(f"No mod called {name!r} in profile {self.active!r}.")
+
+    def overwrite_count(self):
+        d = self.overwrite_dir
+        return len(dep.walk_rel(d)) if os.path.isdir(d) else 0
+
+    def enabled(self):
+        names = [m["name"] for m in self.cur["mods"] if m["enabled"]]
+        if self.overwrite_count():
+            names.append(self.overwrite_name)
+        return names
+
+    # ------------------------------------------------------------ setup
+    def init(self, game_dir=None, prefix=None):
+        g = game_info(self.edition)
+        lib = None
+        if not game_dir:
+            for lib in steam_libraries():
+                cand = os.path.join(lib, "common", g["install_dir"])
+                if os.path.isdir(cand):
+                    game_dir = cand
+                    break
+        if not game_dir or not os.path.isdir(game_dir):
+            raise FolmError(f"Couldn't find {g['game']}. Give its folder.")
+        prefix = prefix or os.path.join(lib or os.path.dirname(os.path.dirname(game_dir)),
+                                        "compatdata", str(g["steam_app_id"]))
+        app = os.path.basename(g["prefix_appdata"])
+        self.data.update({
+            "edition": self.edition, "game": g["game"], "game_dir": game_dir,
+            "data_dir": g["data_dir"], "prefix": prefix, "steam_app_id": g["steam_app_id"],
+            "plugins_txt": f"pfx/drive_c/users/steamuser/AppData/Local/{app}/plugins.txt",
+        })
+        self.data.setdefault("profiles", {"Default": empty_profile()})
+        self.data.setdefault("active", "Default")
+        self.data.setdefault("library_folders", [])
+        os.makedirs(self.mods_dir, exist_ok=True)
+        self.save()
+        return {"game_dir": game_dir, "prefix": prefix, "prefix_exists": os.path.isdir(prefix)}
+
+    # ------------------------------------------------------------ mods
+    @staticmethod
+    def guess_name(archive):
+        return re.sub(r"(-\d+)+.*$|\.(7z|zip|rar)$", "", os.path.basename(archive)).strip() or "mod"
+
+    def fomod_context(self):
+        """What a FOMOD may check: files already in the game + in enabled mods, and active plugins."""
+        files = set()
+        if os.path.isdir(self.data_dir):
+            files |= dep.walk_rel(self.data_dir)
+        for name in self.enabled():
+            d = os.path.join(self.mods_dir, name)
+            if os.path.isdir(d):
+                files |= {rel for rel, is_root in dep.mod_files(d) if not is_root}
+        dis = {d.lower() for d in self.cur["disabled_plugins"]}
+        active = [f for f in files if "/" not in f and f.lower().endswith((".esm", ".esp")) and f.lower() not in dis]
+        return fomod.Context(files, active)
+
+    def install(self, archive, name=None, chooser=None, log=_quiet):
+        """Stage a mod from an archive. Returns (name, detect_result).
+
+        FOMOD (XML) mods need a chooser(step, group) -> [option indexes]; without one,
+        the installer's defaults (required + recommended options) are used.
+        """
+        self.need()
+        r = detect.detect(archive)
+        name = name or self.guess_name(archive)
+        if r["type"] == "fomod-xml":
+            return self._install_fomod(archive, name, r, chooser or (lambda s, g: fomod.default_choice(g)), log)
+        if r["type"] not in ("data", "data+game-root", "game-root"):
+            raise FolmError(f"FOLM can't install '{r['type']}' mods yet.")
+        dest = os.path.join(self.mods_dir, name)
+        if os.path.exists(dest):
+            raise FolmError(f"A mod called {name!r} is already staged.")
+        with tempfile.TemporaryDirectory(dir=self.dir) as tmp:
+            out = subprocess.run(["7z", "x", "-y", f"-o{tmp}", archive], capture_output=True, text=True)
+            if out.returncode != 0:
+                raise FolmError(f"extract failed: {out.stderr.strip()[:300]}")
+            os.makedirs(dest)
+            if r["data_root"] is not None:
+                src = os.path.join(tmp, r["data_root"]) if r["data_root"] else tmp
+                for item in os.listdir(src):
+                    if r["type"] == "data+game-root" and item in r["game_root_files"] and r["data_root"] == "":
+                        continue
+                    shutil.move(os.path.join(src, item), dest)
+            if r["game_root_files"]:
+                base = os.path.join(tmp, detect.unwrap(*detect.list_folder(tmp))) if r["type"] == "game-root" else \
+                    os.path.dirname(os.path.join(tmp, r["data_root"])) if r["data_root"] else tmp
+                rootd = os.path.join(dest, dep.ROOT_DIR)
+                os.makedirs(rootd, exist_ok=True)
+                for item in r["game_root_files"]:
+                    p = os.path.join(base, item)
+                    if os.path.lexists(p):
+                        shutil.move(p, rootd)
+        self.cur["mods"].append({"name": name, "enabled": True, "type": r["type"],
+                                 "source": os.path.abspath(archive), "notes": "", "tags": []})
+        self.save()
+        return name, r
+
+    def _install_fomod(self, archive, name, r, chooser, log):
+        dest = os.path.join(self.mods_dir, name)
+        if os.path.exists(dest):
+            raise FolmError(f"A mod called {name!r} is already staged.")
+        with tempfile.TemporaryDirectory(dir=self.dir) as tmp:
+            out = subprocess.run(["7z", "x", "-y", f"-o{tmp}", archive], capture_output=True, text=True)
+            if out.returncode != 0:
+                raise FolmError(f"extract failed: {out.stderr.strip()[:300]}")
+            root = os.path.join(tmp, r["data_root"]) if r["data_root"] else tmp
+            try:
+                entries, choices, info = fomod.run(root, chooser, self.fomod_context(), log=log)
+            except fomod.FomodError as e:
+                raise FolmError(f"FOMOD installer: {e}")
+            os.makedirs(dest)
+            try:
+                res = fomod.install_files(root, entries, dest, log=log)
+            except Exception:
+                shutil.rmtree(dest, ignore_errors=True)
+                raise
+        for w in info["warnings"]:
+            log(f"  ! {w}")
+        log(f"  FOMOD '{info['name']}': installed {res['files']} file(s)")
+        r = dict(r, warnings=r.get("warnings", []) + info["warnings"])
+        self.cur["mods"].append({"name": name, "enabled": True, "type": "fomod-xml",
+                                 "source": os.path.abspath(archive), "notes": "", "tags": [],
+                                 "fomod_choices": choices})
+        self.save()
+        return name, r
+
+    def fomod_preview(self, archive):
+        """Read a FOMOD installer without installing: returns (extract_dir_owner, module_root).
+
+        The caller must clean up the TemporaryDirectory it gets back.
+        """
+        r = detect.detect(archive)
+        if r["type"] != "fomod-xml":
+            raise FolmError("not an XML FOMOD")
+        tmp = tempfile.TemporaryDirectory(dir=self.dir)
+        out = subprocess.run(["7z", "x", "-y", f"-o{tmp.name}", archive], capture_output=True, text=True)
+        if out.returncode != 0:
+            tmp.cleanup()
+            raise FolmError(f"extract failed: {out.stderr.strip()[:300]}")
+        return tmp, (os.path.join(tmp.name, r["data_root"]) if r["data_root"] else tmp.name)
+
+    def add_folder(self, name):
+        self.need()
+        if not os.path.isdir(os.path.join(self.mods_dir, name)):
+            raise FolmError(f"{name!r} isn't in {self.mods_dir}")
+        if any(m["name"].lower() == name.lower() for m in self.cur["mods"]):
+            raise FolmError(f"{name!r} is already in this profile")
+        self.cur["mods"].append({"name": name, "enabled": True, "type": "folder", "notes": "", "tags": []})
+        self.save()
+
+    def staged_not_in_profile(self):
+        """Mods in the shared library that this profile doesn't list yet."""
+        if not os.path.isdir(self.mods_dir):
+            return []
+        have = {m["name"].lower() for m in self.cur["mods"]}
+        return sorted(n for n in os.listdir(self.mods_dir)
+                      if os.path.isdir(os.path.join(self.mods_dir, n)) and n.lower() not in have
+                      and not n.startswith(OVERWRITE + " ["))
+
+    def set_enabled(self, name, on):
+        self.mod(name)["enabled"] = bool(on)
+        self.save()
+
+    def reorder(self, names):
+        """Set the mod order from a list of names (must be the same set)."""
+        by = {m["name"]: m for m in self.cur["mods"]}
+        if set(names) != set(by):
+            raise FolmError("reorder: mod list changed")
+        self.cur["mods"] = [by[n] for n in names]
+        self.save()
+
+    def move_after(self, name, other):
+        m, o = self.mod(name), self.mod(other)
+        mods = self.cur["mods"]
+        mods.remove(m)
+        mods.insert(mods.index(o) + 1, m)
+        self.save()
+
+    def set_note(self, name, text):
+        self.mod(name)["notes"] = text
+        self.save()
+
+    def add_tags(self, name, tags):
+        m = self.mod(name)
+        m["tags"] = sorted(set(m.get("tags", [])) | {t.strip().lstrip("#").strip().lower() for t in tags if t.strip()})
+        self.save()
+        return m["tags"]
+
+    def set_tags(self, name, tags):
+        self.mod(name)["tags"] = sorted({t.strip().lstrip("#").strip().lower() for t in tags if t.strip()})
+        self.save()
+
+    def remove(self, name):
+        """Remove a mod from this profile (its files stay in the shared library)."""
+        self.cur["mods"].remove(self.mod(name))
+        self.save()
+
+    # ------------------------------------------------------------ categories + sorting
+    def category_of(self, mod):
+        """The mod's section: set by the player, else from its tags, else from its files."""
+        if mod.get("category") in CATEGORIES:
+            return mod["category"]
+        tags = set(mod.get("tags", []))
+        for tag, cat in TAG_CATEGORY:
+            if tag in tags:
+                return cat
+        d = os.path.join(self.mods_dir, mod["name"])
+        files = [(rel.lower(), root) for rel, root in dep.mod_files(d)] if os.path.isdir(d) else []
+        tops = {f.split("/")[0] for f, root in files if not root}
+        if any(f in BASE_PLUGINS for f, _ in files):
+            return "Base game & TTW"
+        if re.search(r"\b(fix|fixes|patch|bugfix|yup)\b", mod["name"].lower()):
+            return "Bug fixes"
+        if "menus" in tops or "uio" in tops:
+            return "UI & menus"
+        if any(root for _, root in files) or any(f.startswith("nvse/plugins/") for f, _ in files):
+            return "Utilities & engine"
+        if tops and tops <= {"textures", "meshes"}:
+            return "Visuals"
+        if any(f.endswith((".esp", ".esm")) and "/" not in f for f, _ in files):
+            return "Content"
+        return "Other"
+
+    def set_category(self, name, category):
+        if category not in CATEGORIES and category is not None:
+            raise FolmError(f"unknown category {category!r}; choose from: {', '.join(CATEGORIES)}")
+        m = self.mod(name)
+        if category is None:
+            m.pop("category", None)
+        else:
+            m["category"] = category
+        self.save()
+
+    def sorted_order(self):
+        """Mod names ordered by category, never changing who wins a file conflict.
+
+        Every pair of mods that share a file keeps its current relative order
+        (loser before winner); otherwise mods go by category, then by their
+        current position.
+        """
+        mods = self.cur["mods"]
+        pos = {m["name"]: i for i, m in enumerate(mods)}
+        names = set(pos)
+        after = self._load_after(names)
+        rank = self._effective_ranks(mods, after)
+        out, done = [], set()
+        while len(out) < len(names):
+            ready = [n for n in names - done if after[n] <= done]
+            if not ready:                                # shouldn't happen; keep the rest as-is
+                ready = sorted(names - done, key=pos.get)[:1]
+            n = min(ready, key=lambda x: (rank[x], pos[x]))
+            out.append(n)
+            done.add(n)
+        return out
+
+    def _load_after(self, names):
+        """{mod: set of mods it must load after}, from who currently wins each shared file."""
+        after = {n: set() for n in names}
+        for provs in self.conflicts().values():
+            ps = [p for p in provs if p in names]
+            for a, b in zip(ps, ps[1:]):
+                after[b].add(a)
+        return after
+
+    def _effective_ranks(self, mods, after):
+        """A patch joins the section of the mod it patches: rank = max(own, everything it loads after)."""
+        rank = {m["name"]: CATEGORIES.index(self.category_of(m)) for m in mods}
+        changed = True
+        while changed:
+            changed = False
+            for n, deps in after.items():
+                r = max([rank[n]] + [rank[d] for d in deps])
+                if r != rank[n]:
+                    rank[n], changed = r, True
+        return rank
+
+    def sections(self):
+        """{mod name: the section it's shown under} (a patch is shown with what it patches)."""
+        mods = self.cur["mods"]
+        names = {m["name"] for m in mods}
+        return {n: CATEGORIES[r] for n, r in self._effective_ranks(mods, self._load_after(names)).items()}
+
+    def sort_mods(self):
+        """Apply sorted_order(). Returns (old_order, new_order)."""
+        old = [m["name"] for m in self.cur["mods"]]
+        new = self.sorted_order()
+        self.reorder(new)
+        return old, new
+
+    # ------------------------------------------------------------ profiles
+    def profiles(self):
+        return list(self.data["profiles"])
+
+    def create_profile(self, name, copy_from=None):
+        ps = self.data["profiles"]
+        if name in ps:
+            raise FolmError(f"profile {name!r} already exists")
+        if copy_from and copy_from not in ps:
+            raise FolmError(f"no profile {copy_from!r}")
+        ps[name] = json.loads(json.dumps(ps[copy_from])) if copy_from else empty_profile()
+        self.save()
+
+    def switch_profile(self, name, log=_quiet):
+        if name not in self.data["profiles"]:
+            raise FolmError(f"no profile {name!r}")
+        was = self.deployed
+        if was:
+            self.undeploy(log)
+        self.data["active"] = name
+        self.save()
+        if was:
+            return self.deploy(log)
+
+    def delete_profile(self, name):
+        if name == self.active:
+            raise FolmError("can't delete the active profile; switch first")
+        if self.data["profiles"].pop(name, None) is None:
+            raise FolmError(f"no profile {name!r}")
+        self.save()
+
+    # ------------------------------------------------------------ LOOT
+    def loot_masterlist(self, log=_quiet, force=False):
+        """LOOT's masterlist for this edition (downloaded from LOOT's GitHub, cached a week)."""
+        from . import loot
+        if getattr(self, "_loot", None) is None or force:
+            self._loot = loot.load(loot.update(home(), self.edition, log=log, force=force))
+        return self._loot
+
+    def game_view(self):
+        """What LOOT's conditions see: the game's Data folder (+ '../' root files) and active plugins."""
+        from . import loot
+        files = {rel: os.path.join(self.data_dir, rel) for rel in dep.walk_rel(self.data_dir)}
+        g = self.data["game_dir"]
+        for f in os.listdir(g):
+            if os.path.isfile(os.path.join(g, f)):
+                files["../" + f] = os.path.join(g, f)
+        plugins, _ = loadorder.scan_plugins(self.data_dir)
+        dis = {d.lower() for d in self.cur["disabled_plugins"]}
+        return loot.GameView(files, [p for p in plugins if p.lower() not in dis], plugins), plugins
+
+    def loot_check(self, log=_quiet):
+        """(extra_after, group_rank, messages) for the plugins in the game folder, or None if LOOT is unavailable."""
+        try:
+            from . import loot
+            ml = self.loot_masterlist(log=log)
+        except Exception as e:                       # offline and no cache: sort without LOOT
+            log(f"  ! LOOT unavailable ({e}); sorting by masters only")
+            return None
+        view, plugins = self.game_view()
+        return loot.evaluate(ml, list(plugins), view)
+
+    # ------------------------------------------------------------ game
+    def deploy(self, log=_quiet):
+        self.need()
+        if os.path.exists(self.lo_state):
+            loadorder.restore(self.plugins_txt, self.lo_state, log=_quiet)
+        names = self.enabled()
+        dep.deploy(self.data["game_dir"], self.data_dir, self.mods_dir, names,
+                   self.manifest, self.backups, log=log, overwrite_dir=self.overwrite_dir)
+        if self.overwrite_name not in names and self.overwrite_name in self.enabled():
+            dep.deploy(self.data["game_dir"], self.data_dir, self.mods_dir, self.enabled(),
+                       self.manifest, self.backups, log=log, overwrite_dir=self.overwrite_dir)
+        lc = self.loot_check(log=log)
+        rules = (lc[0], lc[1]) if lc else None
+        order, active, problems = loadorder.apply(self.data_dir, self.plugins_txt, self.cur["plugin_order"],
+                                                  self.cur["disabled_plugins"], self.edition, self.lo_state,
+                                                  log=log, rules=rules)
+        return {"order": order, "active": active, "problems": problems, "loot": lc[2] if lc else []}
+
+    def undeploy(self, log=_quiet):
+        self.need()
+        loadorder.restore(self.plugins_txt, self.lo_state, log=log)
+        dep.undeploy(self.manifest, log=log, overwrite_dir=self.overwrite_dir)
+
+    def catch(self, log=_quiet):
+        self.need()
+        if not self.deployed:
+            raise FolmError("Nothing is deployed, so there's nothing to catch.")
+        return dep.catch(self.manifest, self.overwrite_dir, log)
+
+    def plugin_order(self):
+        """[(name, active, load_index_or_None)], problems."""
+        self.need()
+        plugins, bad = loadorder.scan_plugins(self.data_dir)
+        lc = self.loot_check()
+        extra, ranks = (lc[0], lc[1]) if lc else ({}, {})
+        order, problems = loadorder.sort_plugins(plugins, self.cur["plugin_order"], self.edition, extra, ranks)
+        self.last_loot_messages = lc[2] if lc else []
+        dis = {d.lower() for d in self.cur["disabled_plugins"]}
+        rows, i = [], 0
+        for n in order:
+            on = n.lower() not in dis
+            rows.append((n, on, i if on else None, plugins[n]["masters"]))
+            i += on
+        return rows, bad + problems
+
+    def set_plugin_active(self, name, on):
+        dis = [d for d in self.cur["disabled_plugins"] if d.lower() != name.lower()]
+        if not on:
+            dis.append(name)
+        self.cur["disabled_plugins"] = dis
+        self.save()
+
+    def conflicts(self, only=None):
+        self.need()
+        baseline = None
+        if self.deployed:
+            with open(self.manifest) as fh:
+                baseline = json.load(fh).get("baseline")
+        c = dep.conflicts(self.data["game_dir"], self.data_dir, self.mods_dir, self.enabled(), baseline)
+        if only:
+            c = {p: v for p, v in c.items() if any(x.lower() == only.lower() for x in v)}
+        return c
+
+    def conflict_marks(self):
+        """{mod_name: (files_won, files_lost)} for the mod list's conflict icons."""
+        marks = {}
+        for path, provs in self.conflicts().items():
+            for i, m in enumerate(provs):
+                w, l = marks.get(m, (0, 0))
+                marks[m] = (w + 1, l) if i == len(provs) - 1 else (w, l + 1)
+        return marks
+
+    def overwrite_files(self):
+        d = self.overwrite_dir
+        return sorted(dep.walk_rel(d)) if os.path.isdir(d) else []
+
+    # ------------------------------------------------------------ library + launch
+    def library_folders(self):
+        return self.data.setdefault("library_folders", [])
+
+    def add_library_folder(self, folder):
+        f = os.path.abspath(os.path.expanduser(folder))
+        if f not in self.library_folders():
+            self.library_folders().append(f)
+            self.save()
+
+    def remove_library_folder(self, folder):
+        if folder in self.library_folders():
+            self.library_folders().remove(folder)
+            self.save()
+
+    def scan_library(self):
+        """Detect every mod file in the library folders; unreadable ones come back as type 'error'."""
+        out = []
+        for p in detect.scan(self.library_folders()):
+            try:
+                out.append(detect.detect(p))
+            except (ValueError, OSError) as e:
+                out.append({"source": p, "type": "error", "warnings": [str(e)], "plugins": []})
+        return out
+
+    def launch(self):
+        """Start the game through Steam (Proton handles the rest)."""
+        self.need()
+        app = self.data.get("steam_app_id") or game_info(self.edition)["steam_app_id"]
+        steam = shutil.which("steam")
+        if not steam:
+            raise FolmError("Steam isn't on PATH.")
+        subprocess.Popen([steam, "-applaunch", str(app)], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return app

@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""folm - The FOLM Project command-line mod manager (v0.3).
+
+Setup
+  folm.py init                        find the game and its Proton prefix
+Mods (in the active profile)
+  folm.py install ARCHIVE [--name] [--auto]   stage a mod (FOMOD installers ask, or --auto for defaults)
+  folm.py add NAME                    register a mod already in the mods folder (e.g. TTW output)
+  folm.py list                        show mods in order (later mods win file conflicts)
+  folm.py enable|disable NAME
+  folm.py move NAME --after OTHER
+  folm.py note NAME "text"            attach a note to a mod
+  folm.py tag NAME TAG [TAG...]       tag a mod (e.g. fixes, weapons, ours)
+  folm.py sort [--preview]            arrange mods by category (never changes who wins a conflict)
+  folm.py category NAME "Category"    put a mod in a section ("auto" = let FOLM decide)
+Profiles (separate setups sharing one mod library)
+  folm.py profile list|create NAME [--copy-from P]|switch NAME|delete NAME
+Game
+  folm.py deploy                      put enabled mods into the game and set the load order
+  folm.py undeploy                    take everything back out, exactly as it was
+  folm.py order                       show the plugin load order (sorted with LOOT's rules)
+  folm.py loot [--update]             LOOT's warnings for your setup (--update: refresh the masterlist)
+  folm.py conflicts [NAME]            which mods overwrite which files, and who wins
+  folm.py catch                       move files the game/tools created into the Overwrite mod
+  folm.py play                        launch the game through Steam
+Fallout 3 -> New Vegas converter
+  folm.py convert-check PLUGIN        report everything converting this FO3 plugin needs
+
+Edition: --edition courier (default, New Vegas/TTW) or wanderer (Fallout 3).
+FOLM_HOME (default ~/Games/FOLM) holds profiles, staged mods and backups.
+The app (folm_gui.py) uses the same engine: folm_core/manager.py.
+"""
+
+import argparse
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from folm_core.manager import Manager, FolmError                      # noqa: E402
+
+
+def cmd_init(a, m):
+    r = m.init(a.game_dir, a.prefix)
+    print(f"{m.edition} ready (profile {m.active!r})\n  game:   {r['game_dir']}\n"
+          f"  prefix: {r['prefix']}\n  mods:   {m.mods_dir}")
+    if not r["prefix_exists"]:
+        print("  ! Proton prefix not found yet: launch the game once through Steam.")
+
+
+def terminal_chooser(step, group):
+    """Ask in the terminal. Enter = the installer's defaults."""
+    from folm_core import fomod
+    default = fomod.default_choice(group)
+    print(f"\n[{step}] {group['name']}  ({group['type']})")
+    for i, p in enumerate(group["plugins"], 1):
+        mark = "*" if i - 1 in default else " "
+        print(f"  {mark}{i}. {p['name']}  [{p['type']}]")
+        if p["description"]:
+            print("       " + p["description"].splitlines()[0][:110])
+    while True:
+        raw = input(f"  choose (e.g. 1 or 1,3; Enter = {','.join(str(d + 1) for d in default) or 'none'}): ").strip()
+        if not raw:
+            return default
+        try:
+            picked = [int(x) - 1 for x in raw.replace(" ", ",").split(",") if x]
+            fomod.validate(group, picked)
+            return picked
+        except (ValueError, fomod.FomodError) as e:
+            print(f"  ! {e}")
+
+
+def cmd_install(a, m):
+    chooser = None if a.auto else terminal_chooser
+    name, r = m.install(a.archive, a.name, chooser=chooser, log=print)
+    print(f"{os.path.basename(a.archive)}: {r['type']}")
+    for w in r.get("warnings", []):
+        print(f"  ! {w}")
+    print(f"  staged as {name!r} (enabled in profile {m.active!r}). Run 'folm.py deploy'.")
+
+
+def cmd_add(a, m):
+    m.add_folder(a.name)
+    print(f"Added {a.name!r} to profile {m.active!r} (enabled).")
+
+
+def cmd_list(a, m):
+    m.need()
+    print(f"{m.data['game']} | profile {m.active!r} | {'deployed' if m.deployed else 'not deployed'}")
+    for i, mod in enumerate(m.mods(), 1):
+        tags = f"  #{' #'.join(mod.get('tags', []))}" if mod.get("tags") else ""
+        print(f"  {i:2}. [{'x' if mod['enabled'] else ' '}] {mod['name']}  ({mod.get('type', '?')}){tags}")
+        if mod.get("notes"):
+            print(f"        note: {mod['notes']}")
+    if m.overwrite_count():
+        print(f"   *. [x] {m.overwrite_name}  ({m.overwrite_count()} caught file(s), always last)")
+    if not m.mods():
+        print("  (no mods yet)")
+
+
+def cmd_toggle(a, m, on):
+    m.set_enabled(a.name, on)
+    print(f"{'Enabled' if on else 'Disabled'} {a.name!r}. Run 'folm.py deploy' to apply.")
+
+
+def cmd_move(a, m):
+    m.move_after(a.name, a.after)
+    cmd_list(a, m)
+
+
+def cmd_note(a, m):
+    m.set_note(a.name, a.text)
+    print(f"Note saved for {a.name!r}.")
+
+
+def cmd_tag(a, m):
+    print(f"{a.name!r} tags: {', '.join(m.add_tags(a.name, a.tags))}")
+
+
+def cmd_sort(a, m):
+    from folm_core.manager import CATEGORIES
+    old = [x["name"] for x in m.mods()]
+    new = m.sorted_order() if a.preview else m.sort_mods()[1]
+    sec = m.sections()
+    last = None
+    for i, n in enumerate(new, 1):
+        cat = sec[n]
+        if cat != last:
+            print(f"  -- {cat} --")
+            last = cat
+        moved = "" if old.index(n) == i - 1 else f"   (was {old.index(n) + 1})"
+        print(f"  {i:2}. {n}{moved}")
+    print("\nPreview only; run 'folm.py sort' to apply." if a.preview else
+          ("\nSorted. Run 'folm.py deploy' to apply." if new != old else "\nAlready sorted."))
+
+
+def cmd_category(a, m):
+    from folm_core.manager import CATEGORIES
+    m.set_category(a.name, None if a.category.lower() == "auto" else a.category)
+    print(f"{a.name!r} -> {m.category_of(m.mod(a.name))}")
+
+
+def cmd_profile(a, m):
+    m.need()
+    if a.action == "list":
+        for n in m.profiles():
+            p = m.data["profiles"][n]
+            on = sum(x["enabled"] for x in p["mods"])
+            print(f"  {'*' if n == m.active else ' '} {n}  ({on}/{len(p['mods'])} mods enabled)")
+        return
+    if not a.name:
+        raise FolmError("give a profile name")
+    if a.action == "create":
+        m.create_profile(a.name, a.copy_from)
+        print(f"Created profile {a.name!r}" + (f" from {a.copy_from!r}." if a.copy_from else " (empty)."))
+    elif a.action == "switch":
+        r = m.switch_profile(a.name, log=print)
+        print(f"Active profile: {a.name!r}")
+        if r:
+            print(f"Load order set: {len(r['active'])} active plugin(s) of {len(r['order'])}.")
+    elif a.action == "delete":
+        m.delete_profile(a.name)
+        print(f"Deleted profile {a.name!r} (its mods stay in the shared library).")
+
+
+def cmd_deploy(a, m):
+    r = m.deploy(log=print)
+    print(f"Load order set: {len(r['active'])} active plugin(s) of {len(r['order'])} (profile {m.active!r}), sorted with LOOT's rules.")
+    errs = [x for x in r.get("loot", []) if x[0] in ("error", "warn")]
+    if errs:
+        print("LOOT says:")
+        print_loot(errs)
+    if r["problems"]:
+        print("  Fix the problems above before playing.")
+
+
+def cmd_undeploy(a, m):
+    m.undeploy(log=print)
+
+
+def cmd_catch(a, m):
+    n = m.catch(log=print)
+    print(f"Caught {n} file(s)." if n else "Game folder is clean: nothing to catch.")
+
+
+def print_loot(msgs):
+    icon = {"error": "✖ ERROR", "warn": "⚠ WARN ", "say": "ℹ note "}
+    for sev in ("error", "warn", "say"):
+        for s, plugin, text in msgs:
+            if s == sev:
+                print(f"  {icon[s]}  {plugin + ': ' if plugin else ''}{text}")
+
+
+def cmd_order(a, m):
+    rows, problems = m.plugin_order()
+    for n, on, idx, _ in rows:
+        print(f"  {f'{idx:02X}' if on else '--'}  {n}")
+    for p in problems:
+        print(f"  ! {p}")
+    if m.last_loot_messages:
+        print("\nLOOT says:")
+        print_loot(m.last_loot_messages)
+
+
+def cmd_loot(a, m):
+    m.need()
+    m.loot_masterlist(log=print, force=a.update)
+    lc = m.loot_check()
+    msgs = lc[2] if lc else []
+    print(f"LOOT checked {len(m.game_view()[1])} plugins: "
+          f"{sum(1 for x in msgs if x[0] == 'error')} error(s), {sum(1 for x in msgs if x[0] == 'warn')} warning(s), "
+          f"{sum(1 for x in msgs if x[0] == 'say')} note(s).")
+    print_loot(msgs)
+    print("\nLoad-order data: LOOT masterlist (public domain, https://loot.github.io)")
+
+
+def cmd_conflicts(a, m):
+    c = m.conflicts(a.name)
+    if not c:
+        print("No file conflicts." + (f" ({a.name} doesn't overlap with anything)" if a.name else ""))
+        return
+    by_pair = {}
+    for path, provs in c.items():
+        by_pair.setdefault((tuple(provs[:-1]), provs[-1]), []).append(path)
+    for (losers, winner), paths in sorted(by_pair.items(), key=lambda x: -len(x[1])):
+        print(f"{winner}  wins over  {', '.join(losers)}  ({len(paths)} file(s))")
+        for p in paths[:a.limit]:
+            print(f"    {p}")
+        if len(paths) > a.limit:
+            print(f"    ... and {len(paths) - a.limit} more")
+    print("\nLater mods win. Reorder with: folm.py move NAME --after OTHER")
+
+
+def cmd_play(a, m):
+    print(f"Launching Steam app {m.launch()}...")
+
+
+def cmd_convert_check(a, m):
+    from folm_core import fo3convert
+    rep = fo3convert.check(a.plugin)
+    print(json.dumps(rep, indent=1) if a.json else fo3convert.format_report(rep))
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="folm.py", description="The FOLM Project mod manager (v0.3)")
+    p.add_argument("--edition", default="courier", choices=["courier", "wanderer"])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("init"); s.add_argument("--game-dir"); s.add_argument("--prefix")
+    s = sub.add_parser("install"); s.add_argument("archive"); s.add_argument("--name")
+    s.add_argument("--auto", action="store_true", help="FOMOD: take the installer's default choices without asking")
+    s = sub.add_parser("add"); s.add_argument("name")
+    sub.add_parser("list")
+    s = sub.add_parser("enable"); s.add_argument("name")
+    s = sub.add_parser("disable"); s.add_argument("name")
+    s = sub.add_parser("move"); s.add_argument("name"); s.add_argument("--after", required=True)
+    s = sub.add_parser("note"); s.add_argument("name"); s.add_argument("text")
+    s = sub.add_parser("tag"); s.add_argument("name"); s.add_argument("tags", nargs="+")
+    s = sub.add_parser("sort"); s.add_argument("--preview", action="store_true")
+    s = sub.add_parser("category"); s.add_argument("name"); s.add_argument("category")
+    s = sub.add_parser("profile"); s.add_argument("action", choices=["list", "create", "switch", "delete"])
+    s.add_argument("name", nargs="?"); s.add_argument("--copy-from")
+    for c in ("deploy", "undeploy", "order", "catch", "play"):
+        sub.add_parser(c)
+    s = sub.add_parser("loot"); s.add_argument("--update", action="store_true")
+    s = sub.add_parser("conflicts"); s.add_argument("name", nargs="?"); s.add_argument("--limit", type=int, default=5)
+    s = sub.add_parser("convert-check"); s.add_argument("plugin"); s.add_argument("--json", action="store_true")
+    a = p.parse_args(argv)
+    m = Manager(a.edition)
+    cmds = {"init": cmd_init, "install": cmd_install, "add": cmd_add, "list": cmd_list,
+            "enable": lambda a, m: cmd_toggle(a, m, True), "disable": lambda a, m: cmd_toggle(a, m, False),
+            "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
+            "sort": cmd_sort, "category": cmd_category,
+            "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
+            "catch": cmd_catch, "play": cmd_play, "loot": cmd_loot, "convert-check": cmd_convert_check}
+    try:
+        cmds[a.cmd](a, m)
+    except FolmError as e:
+        sys.exit(f"folm: {e}")
+
+
+if __name__ == "__main__":
+    main()

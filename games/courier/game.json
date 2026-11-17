@@ -1,0 +1,14 @@
+{
+  "edition": "Courier",
+  "game": "Fallout: New Vegas",
+  "also_supports": ["Tale of Two Wastelands"],
+  "steam_app_id": 22380,
+  "install_dir": "Fallout New Vegas",
+  "exe": "FalloutNV.exe",
+  "data_dir": "Data",
+  "prefix_appdata": "pfx/drive_c/users/steamuser/AppData/Local/FalloutNV",
+  "ini_dir": "pfx/drive_c/users/steamuser/Documents/My Games/FalloutNV",
+  "script_extender": {"name": "xNVSE", "source": "github:xNVSE/NVSE"},
+  "memory_patch": "FNV 4GB Patcher",
+  "editor": {"name": "GECK", "extender": "GECK Extender"}
+}

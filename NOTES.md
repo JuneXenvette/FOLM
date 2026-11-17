@@ -1,0 +1,100 @@
+# Project notes
+
+Running log of setup decisions and what we found. Newest at the bottom.
+
+## Plan
+Base: Fallout New Vegas + Fallout 3 GOTY + Tale of Two Wastelands (TTW).
+Our layer on top: wasteland selection menu, bug-fix/QoL layer, Linux kit, later asset rework.
+TTW needs **clean, unmodded** installs of both games, so no mods go in until TTW is built.
+
+## 2026-11-16
+- New Vegas installed via Steam (app 22380, build 1510068, all DLC present). Proton prefix exists.
+- Found leftovers from an earlier install in the game folder: xNVSE (May 2026), its logs, NVAC/MCM/ShowOff/UI Organizer logs, `Data/NVSE/nvse_config.ini`.
+  Moved them (not deleted) to `backups/old-nv-leftovers/` to give TTW a clean base. We'll install current versions after TTW.
+- `nvcase` scan of the fresh install: no case collisions.
+- Next: install Fallout 3 GOTY, launch each game once to the main menu, download TTW.
+- Project named **The FOLM Project** (umbrella). Editions: **Courier** (New Vegas + TTW) and **Wanderer** (Fallout 3 standalone), sharing one engine in `folm_core/`.
+  Game layers live in `games/courier/` and `games/wanderer/` (`game.json` each). `nvcase` moved to `folm_core/`.
+- Decided: build our own manager (selling point: handles *all* mods, incl. legacy FOMM scripts and .exe installers via a Wine sandbox).
+  Dependencies use "Download & Install" from official sources + Nexus nxm:// handler, with "open page" fallback.
+- **TTW source:** official download moved to ModPub: https://mod.pub/ttw/133/files (the old taleoftwowastelands.com forum is a read-only archive).
+  Files: "Tale of Two Wastelands 3.4" (v3.4.0, 1.2 GiB, main installer), "YUPTTW 13.9.1" (27.8 MiB, bug-fix update, load after TTW),
+  "Updated OGG Vorbis Files" (optional, FNV root), "TTW Conversion Package" (for converting FO3 mods to TTW — useful later).
+  Needs a free ModPub account to download. Install guide: https://thebestoftimes.moddinglinked.com/ttw.html
+- **License:** ModPub Private Use License — FOLM must never bundle or re-host TTW; the player downloads it themselves (fits our "download from official source" design).
+- TTW installer is CPU-heavy (audio re-encoding): ~40 min on a Ryzen 5 5600X, so expect several hours on this i3-7100T. Close other apps first.
+- Downloaded to ~/Downloads (both pass `7z t`):
+  `Tale of Two Wastelands 3.4-133-3.4.0-2026.06.11-[mod.pub].7z` (1.28 GB) → Install.exe, 3.4.mpi (1.85 GB), BASS audio DLLs, oggenc2.exe, libFLAC, xdelta3.dll, Reencoding.bat.
+  `YUPTTW 13.9.1-133-3.4.0-2026.05.09-[mod.pub].7z` (29 MB) → YUPTTW.esm, Main.bsa, Sounds.bsa, .override files. Install as a mod loaded after TTW.
+- The TTW installer is a Windows .exe (Install.exe + .mpi package) → run it under Wine/Proton. This is FOLM's first real ".exe installer" test case.
+- New Vegas: Saves folder exists in the prefix but no Fallout.ini/FalloutPrefs.ini yet → still needs one launch to the main menu.
+- FO3 launched to a black screen (GE-Proton10-34). GPU detected fine (RX 580, RADV); multi-core fix already set (iNumHWThreads=2).
+  Cause suspect: FalloutPrefs.ini had 1280x720 fullscreen on a 1920x1080 monitor (X11 mode switch → black). Changed to 1920x1080.
+  Original saved at backups/fo3-ini/FalloutPrefs.ini.orig. → FOLM Wanderer setup should set resolution to the monitor's native size.
+  ✅ Confirmed by user: FO3 now launches to the menu.
+- **TTW installer under Linux — what worked (FOLM .exe-installer findings):**
+  - Extracted to `~/Games/FOLM/work/ttw-3.4/`. Separate sandbox prefix at `~/Games/FOLM/prefixes/installer` (GE-Proton10-34).
+  - `proton run "TTW Install.exe"` exits 1 silently with no log. Running Proton's own wine binary directly works:
+    `WINEPREFIX=.../installer/pfx .../GE-Proton10-34/files/bin/wine "TTW Install.exe"`
+  - Game paths auto-fill once the sandbox registry has them (32-bit view):
+    `HKLM\Software\Bethesda Softworks\Fallout3` and `...\FalloutNV`, value `Installed Path` = `Z:\...\steamapps\common\<game>\`.
+    → FOLM should write these registry keys automatically in its installer sandbox.
+  - Destination: `~/Games/FOLM/courier/mods/Tale of Two Wastelands` (FOLM staging, outside the game folder; needs 17 GB).
+  - Installer also supports `-NoOggEnc2` (built-in BASS encoder instead of thousands of oggenc2.exe launches) — test if speed matters.
+  - Don't wrap a GUI installer in a short `timeout`: it killed the window mid-session.
+- **TTW install started 16:51** (196,916 steps). Idle sleep blocked by `systemd-inhibit` until the installer closes.
+  Progress log: `~/Games/FOLM/work/ttw-progress.log` (every 5 min). Early rate ~420 MB/min (file copying); audio re-encoding later will be slower.
+- **detect.py built** (folm_core). Tested on real downloads (YUPTTW → data, TTW archive → ttw-installer, three non-Fallout mods → unknown) and 8 synthetic archives (FOMOD XML in a wrapper folder, FOMM C# script, BAIN, Data+root mirror, NVSE plugin, xNVSE, case collision, .exe). Fixed: folder-name case collisions weren't detected.
+- v0.1 design notes for deployment: games and ~/Games/FOLM are on the same filesystem → hard links (no extra space, instant removal).
+  FNV/FO3 load order comes from plugin file **modified times** (plus plugins.txt in the prefix's AppData/Local/FalloutNV for which are active).
+- **folm.py v0.1 built**: `folm_core/plugins.py` (TES4 header reader + master-aware sort), `deploy.py` (hard-link deploy, case resolver, conflict order, backups, manifest undo), `loadorder.py` (timestamps in ns + plugins.txt with backup).
+  Header reader verified on the real FNV ESMs. End-to-end test on a fake game folder: install from archives, conflicts (later mod wins), game-file override backup, root DLLs, case merge (textures→Textures), missing-master warning, disable + redeploy, undeploy → game folder restored exactly.
+- **v0.2 organizer:** profiles (v0.1 profile.json auto-upgrades to "Default"), per-profile Overwrite (bug found in testing: a shared Overwrite leaked one profile's caught files into others — fixed), conflicts, catch (new + tool-changed files; root *.log ignored), notes, tags. All tested on the fake game folder.
+- **FO3 converter:** user pasted the official TTW Mod Conversion Guidelines (GECK wiki was behind a bot check that kept resetting). Summary + stage plan in docs/fo3-converter.md.
+  Built `esp.py` (full plugin reader/writer; byte-identical round trip on all 5 FO3 DLC ESMs, ~213k records, <1 s each) and `fo3convert.py` + `folm.py convert-check` (tested on real Zeta.esm and a fake ESP that trips every rule).
+  Next for the converter: FormID field map (xEdit definitions, MPL-2.0) for master renumbering; the TTW Conversion Package (user's own copy) for the CSV remap.
+- **Decision (user):** FOLM's converter is entirely our own. No TTW Conversion Package, xEdit script or TTWConversion.csv.
+  Stage 3 replaced with FOLM's own remap table, derived from the player's original FO3 ESMs vs. their TTW-built ESMs. Guidelines used only as a source of facts (credited).
+- README now states: TTW support is **optional** (only for players who want TTW; plain FNV and FO3 fully supported), and FOLM has **its own** FO3 → New Vegas converter with two targets: → TTW and → plain New Vegas (standalone FO3 mods). docs/fo3-converter.md updated to match.
+- **TTW run 1 was far too slow** under Wine: 12,451 / 196,916 steps in 44 min (~6%), ~10 oggenc2 runs/min, wineserver ~92% CPU — the cost of launching a Windows process per audio file. Projected 12+ hours.
+  Cancelled (wineserver -k on the sandbox), cleared the half-built output, **restarted 17:32 with `-NoOggEnc2`** (built-in BASS encoder, no per-file process). Run-1 log kept as `work/ttw-progress-run1-oggenc2.log`.
+  → FOLM: always launch the TTW installer with `-NoOggEnc2` on Linux (pending the speed check).
+- Bug lesson: `pgrep -f "TTW Install.exe"` / `pkill -f ttw-watch.sh` match their *own* command lines (the sleep block never released; pkill killed its own shell). Use the `[T]TW Install.exe` bracket trick, or better, track PIDs. → FOLM's sandbox runner must track the installer by PID.
+- ✅ **`-NoOggEnc2` confirmed far faster:** run 2 reached 45,112 / 196,916 steps in ~4.3 min (run 1: 12,451 in 44 min) — roughly **35x faster** at the comparable point. CPU now goes to the installer itself (~150%), wineserver overhead gone.
+  → FOLM's TTW support should always use `-NoOggEnc2` on Linux.
+- 17:42: run 2 at 45,117 steps; counter barely moving and output flat at 4.4 GB, but the installer (pid 44563; pid 44562 is only the wine launcher) is at ~190–250% CPU with FO3's Sound/Voices/MenuVoices BSAs open and no disk I/O → encoding audio in memory (CPU-bound), not stuck. The step counter doesn't move much during this stage.
+  → FOLM's progress display shouldn't rely on the step counter alone; show CPU/activity so a busy stage doesn't look frozen.
+- ✅ **TTW 3.4 built on Linux** (run 2, `-NoOggEnc2`): 17:32 → 17:53, about **21 minutes** total (run 1 projected 12+ h). Output 17.13 GB, 288 files: 18 plugins (all read OK; sort to the exact TTW order, no missing masters), 28 BSAs (all valid headers), .override/.NAM files, Music/, sound/, Video/.
+  - The finish screen renders blank under Wine (text missing, only a green button) — cosmetic. Closed via wineserver -k after verifying output.
+  - TTW's output includes **its own FalloutNV.esm and NV DLC ESMs** (modified copies) → deploying will override the vanilla ones; FOLM backs them up automatically.
+  - YUPTTW.esm lists its master as `TaleofTwoWastelands.esm` (lowercase "of") while the file is `TaleOfTwoWastelands.esm` → case-insensitive matching matters (FOLM handles it).
+- **The app, first version:** `folm_gui.py` (PySide6 6.8.1 in a project-only `.venv`, 264 MB; `run-folm.sh` starts it). Engine logic moved out of folm.py into `folm_core/manager.py` so the CLI and the app share it (CLI regression test passed, exact restore).
+  Tested offscreen against the fake game: mod list + conflict marks, deploy/undeploy, plugins tab, conflicts, untick, reorder (conflict winner flips), notes/tags (fixed: tags kept leading spaces), library scan. Background jobs keep the window responsive.
+- **Requirements installed (18:07–18:20):**
+  - xNVSE 6.4.9 from the official GitHub release → FOLM mod (detected data+game-root, no manual steps).
+  - 4GB patcher: Nexus 62552 file "FNV4GB for Proton" 1.5 = native Linux binary `FalloutNVPatcher` (37 KB, std libs only, no network/exec strings; sha256 7bc03fed…). Ran in the game folder: 188 bytes changed, Large Address Aware now on, makes FalloutNV_backup.exe. Our own vanilla backup: `~/Games/FOLM/courier/backups/exe/FalloutNV.exe.vanilla` (sha256 3a87f92f…). The patcher drops the exec bit → restored to 775.
+  - TTW NVSE 3.3.3b (Nexus 77415, file "ROOGNVSE") → FOLM mod (nvse/plugins/ttw_nvse.dll + TTW.ini).
+  - MCM (XML FOMOD) 1.5.1 + MCM BugFix 2 downloaded, **not installed yet** (needs FOLM's FOMOD installer, milestone 3). User wants MCM as a required mod.
+- ✅ **First real deploy into New Vegas:** 4 mods, 300 files hard-linked in 0.1 s (no extra disk space), 21 vanilla files backed up (TTW's own FalloutNV.esm + DLC ESMs/BSAs), YUPTTW wins 5 files over TTW. Load order 00 FalloutNV.esm … 10 TaleOfTwoWastelands.esm, 11 YUPTTW.esm; plugins.txt 18 lines. Case resolver merged xNVSE's `NVSE/` and TTW NVSE's `nvse/plugins/` into one `Data/NVSE/`. Pre-deploy snapshot: `courier/backups/pre-deploy-snapshot.txt` (467 files).
+- make-shortcut.sh: app-menu entry (~/.local/share/applications/folm.desktop) with the icon converted from the user's own FalloutNV.ico (256x256 PNG in ~/.local/share/icons). Not stored in the repo; public releases need an original FOLM icon.
+- **FOLM logo** (user's own artwork) added: assets/folm-logo.png + square icons 48–512 (padded on the logo's own #010101 background). Shortcut, app window and README now use it; the earlier game-icon extraction was removed.
+- 🎉 **MILESTONE (18:37): TTW 3.4 runs on Linux, installed and deployed by FOLM.** User confirmed it loaded. nvse.log: xNVSE 6.4.9 initialized from the merged Data/NVSE/Plugins; `ttw_nvse.dll` v333 "loaded correctly". After quitting, `folm.py catch` found the game folder clean (only root *.log files, which are ignored by design).
+  Full chain proven: TTW installer in FOLM's Wine sandbox (-NoOggEnc2, ~21 min) → FOLM staging → hard-link deploy + load order → Steam/Proton launch with 4GB patch + xNVSE.
+- **FOMOD installer built** (`folm_core/fomod.py`, ~280 lines, no dependencies). Hooked into `Manager.install` (choices saved as `fomod_choices`), CLI (terminal prompts / `--auto`), and the app (FomodDialog wizard; the background job pauses on a threading.Event while the UI thread asks).
+  Tests: real MCM (UTF-16 XML; 2 SelectExactlyOne groups; 24 files; "No" leaves out exactly the 2 menu files; cancel leaves nothing behind); a fake complex FOMOD (wrapper folder, multi-step, flag-gated step, setup-dependent Recommended/NotUsable, conditionalFileInstalls, priority override, NotUsable refused, replay identical); app wizard offscreen (dialog shows defaults, description, image; window re-enabled after).
+  Fix found while testing: `run()` disabled the whole window, which would also disable the wizard dialog → now locks only the central widget + toolbar.
+- **MCM installed for real:** "MCM 1.5.1" (FOMOD, recommended answers) + "MCM BugFix 2" (wins the esp), both tagged required. Deploy: 6 mods, 324 files; load order 12 = The Mod Configuration Menu.esp (BugFix version); MCM.dll next to ttw_nvse.dll.
+- **First TTW launch with MCM:** TTW's own startup checks fired (proves ttw_nvse works). MCM.dll "loaded correctly". Warnings: missing **JohnnyGuitar NVSE ≥5.01**, **lStewieAl's Tweaks ≥9.41**, **ShowOff xNVSE ≥1.80**; "not 4GB patched" (but LAA flag is set and nvse_steam_loader was started by the patched exe — likely a false alarm until the plugins are in); "FalloutCustom.ini misconfigured" (file didn't exist; it's a **JIP LN** feature → JIP LN also needed).
+  Wrote `My Games/FalloutNV/FalloutCustom.ini` (in the 22380 prefix) with the guide's settings incl. TTW's `SCharGenQuest=001FFFF8` and `SIntroMovie=`.
+  → FOLM feature idea: manage FalloutCustom.ini per profile (and a "TTW required plugins" checklist before Play).
+- **Loose-vs-archive bug (MCM button missing):** TTW's own `Fallout - Misc.bsa` contains menus/options/start_menu.xml and was built today; MCM's loose copy is dated 2012. FNV only lets a loose file win if it's newer than the archive, so TTW's menu won. Fix: FOLM's load-order step now redates every Data/*.bsa to 2006-01-01 (originals saved, restored exactly on undeploy; tested on the fake game). Also added [Archive] bInvalidateOlderFiles=1 / SInvalidationFile= to FalloutCustom.ini (backup: courier/backups/FalloutCustom.ini.v1). New `folm_core/bsa.py` lists BSA contents (41 archives / 331,199 files indexed in about a second).
+- **Batch install of 9 mods** (JIP LN 57.30 + INI, JohnnyGuitar 5.28, ShowOff 1.84 + INI, UIO 2.30, Stewie Tweaks 10.05 + INI, Perk Per Level): all detected as data, all installed with no manual steps. Deploy: 15 mods / 412 files; one NVSE and one menus folder (case merge worked); 7 NVSE DLLs; no unexpected conflicts. Started docs/compatibility.md.
+- **Sorting + sections:** user asked for a way to organize mods. Added categories (auto-detected from tags and files, overridable per mod), a conflict-safe sort (keeps every shared file's winner; a patch joins its target's section), CLI `sort [--preview]` / `category`, and in the app a **Sort mods** button, gold section headers and a right-click **Category** menu.
+  Section order matches the community guide structure (Viva New Vegas: Utilities → Bug Fixes → User Interface → Content → Gameplay → Visuals), with TTW first as the TTW guide installs it.
+  Applied to the real profile: 13 mods moved, all 27 conflicting files keep the same winner; redeployed. (Plugin load order is separate and already master-sorted.)
+  Guide also lists more essentials not installed yet: NVTF, Engine Optimizations, Combat Lag Fix, VATS Lag Fix, ActorCause Save Bloat Fix, kNVSE, FNV Mod Limit Fix, Yvile's Crash Logger, Improved Console, Console Paste Support.
+- **LOOT support** (`folm_core/loot.py`, native, no Windows LOOT): downloads loot/falloutnv + loot/prelude (branch v0.29, **CC0/public domain**) to ~/Games/FOLM/loot (cached 7 days). Splices the prelude like LOOT, parses 880 plugin entries / 25 groups. Implements groups, after/req rules, conditional msgs, req/inc checks, dirty CRC notices, and conditions file/active/many/many_active/checksum/version/product_version/is_master/readable with not/and/or (PE version reader for DLL/EXE). Plugin sort rewritten to honor LOOT groups + rules within the hard rules (masters, ESM-before-ESP, vanilla first).
+  Real setup: 0 errors / 0 warnings; "FNV up-to-date", "xNVSE up-to-date" (PE versions read correctly); order unchanged (already correct). Proven: removing JIP LN → LOOT error "TTW requires JIP LN". Bugs fixed while testing: regex `\` in file patterns was being turned into `/`; the app's .venv lacked PyYAML (added; requirements.txt created; LOOT now optional so a missing dependency can't crash the app).
+- **Credits** section added to README, led by the TTW team (inspiration for FOLM), then LOOT, ModdingLinked, xNVSE and plugin authors, Bethesda/Obsidian.
+- **Correction:** LOOT *did* change the plugin order (my "unchanged" check compared two LOOT-sorted lists). LOOT's masterlist puts the courier packs (Caravan/Classic/Mercenary/Tribal) after Zeta.esm and before TaleOfTwoWastelands.esm — TTW's official order. Fixed FOLM's built-in VANILLA_ORDER to match, so offline (no-LOOT) sorting gives the same result; verified identical.
+- **V-Sync:** user had a display problem, turned V-Sync off in the launcher (FalloutPrefs iPresentInterval=0), but FalloutCustom.ini (read by JIP LN) forced it back on. Set FalloutCustom iPresentInterval=0 (backup FalloutCustom.ini.v2). Recommend NVTF for stable physics without V-Sync. → FOLM: an INI editor should show when FalloutCustom.ini overrides a launcher setting.
