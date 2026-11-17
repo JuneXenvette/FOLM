@@ -115,8 +115,10 @@ def find_strays(m):
     game_dir = m["game_dir"]
     baseline = set(m.get("baseline", []))
     ours = {os.path.relpath(r["target"], game_dir).replace(os.sep, "/") for r in m["files"]}
+    data_name = (m.get("data_dir_name") or "Data").lower() + "/"
+    # Log files outside Data (game folder, its logs/ subfolder) are written every launch: leave them.
     new = sorted(p for p in walk_rel(game_dir) - baseline - ours
-                 if not ("/" not in p and p.lower().endswith(".log")))
+                 if not (p.lower().endswith(".log") and not p.lower().startswith(data_name)))
     changed = []
     for r in m["files"]:
         t, s = r["target"], r["source"]
