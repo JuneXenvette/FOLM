@@ -24,6 +24,9 @@ Fallout 3 GOTY, GE-Proton10-34, FOLM v0.3.
 | lStewieAl's Tweaks | 10.05 | Nexus 66347 | data | ✅ | ⏳ | TTW requires ≥ 9.41. Capitalised `Menus/` + `NVSE/` merged by FOLM's case fixing |
 | Stewie Tweaks INI | 2.1 | Nexus 66347 | data | ✅ | ⏳ | Empty starter file; the plugin fills in options on launch |
 | Perk Per Level | 1.0 | Nexus 66347 | data | ✅ | ⏳ | Gameplay change (perk every level) |
+| kNVSE Animation Plugin | 37 | Nexus 71336 | data | ✅ | ⏳ | TTW guide essential |
+| NVTF – New Vegas Tick Fix | 10.61 (+ INI 1.06) | Nexus 66537 | data | ✅ | ⏳ | Needed with V-Sync off |
+| Yvile's Crash Logger | 3.0 | Nexus 72317 | data | ✅ | ⏳ | Modern replacement for NVAC |
 | Project Nevada | 2.5 | Nexus 40040 | fomod-csharp (old FOMM script) | ✅ (FOLM legacy installer: Mono + FOMM shim + bubblewrap sandbox) | ⏳ not deployed (Testing profile only; not for TTW) | The mod's own WinForms installer ran natively. Needed: `CreateCustomForm` in the shim; font-matched scaling (layout was stretched off-window). Patched the player's current start_menu.xml (+5 lines) like FOMM did. 756 files, 16 duplicate-case folders merged. Community Safe Modding list advises against using it in a modern setup |
 
 ## Problems found and fixed in FOLM while testing
