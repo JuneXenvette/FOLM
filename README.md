@@ -103,6 +103,10 @@ pick mod file → DETECT type → INSTALL to its own staging folder (case-fixed)
 | FOMOD/FOMM with C# script | Legacy script engine (reimplemented FOMM functions) |
 | `.exe` installer | Run in a separate Wine sandbox against a decoy game folder; record what it changed and turn that into a normal mod |
 
+## Making mods
+
+Mod makers: FOLM opens the GECK with your mods loaded and turns what you save into a managed mod. See **[Making mods on Linux](MODDING-ON-LINUX.md)**.
+
 ## Load order & LOOT
 
 FOLM keeps two separate orders:

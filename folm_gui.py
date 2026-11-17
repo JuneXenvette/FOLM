@@ -233,7 +233,10 @@ class Main(QMainWindow):
         self.btn_play = QPushButton("▶  Play")
         self.btn_play.setStyleSheet("font-weight: bold; padding: 4px 16px;")
         self.btn_play.clicked.connect(self.play)
-        for w in (self.btn_deploy, self.btn_undeploy, self.btn_play):
+        self.btn_geck = QPushButton("🛠 GECK")
+        self.btn_geck.setToolTip("Make or edit a mod in GECK with your mods loaded")
+        self.btn_geck.clicked.connect(self.open_geck)
+        for w in (self.btn_deploy, self.btn_undeploy, self.btn_play, self.btn_geck):
             tb.addWidget(w)
         tb.addSeparator()
         b = QPushButton("⟳ Refresh")
@@ -734,6 +737,28 @@ class Main(QMainWindow):
             if p.lower().endswith((".7z", ".zip", ".rar")):
                 self.install(p)
                 break
+
+    def open_geck(self):
+        names = [x["name"] for x in self.m.mods()]
+        choice, ok = QInputDialog.getItem(self, "GECK", "What are you working on?",
+                                          ["A new mod"] + [f"Edit: {n}" for n in names], 0, False)
+        if not ok:
+            return
+        edit = choice[6:] if choice.startswith("Edit: ") else None
+
+        def done(files):
+            if edit or not files:
+                return
+            name, ok = QInputDialog.getText(self, "Keep your mod",
+                                            f"GECK saved {len(files)} file(s). Name your new mod:", text="My Mod")
+            if ok and name.strip():
+                try:
+                    self.m.keep_as_mod(name.strip())
+                    self.say(f"Made mod {name.strip()!r}. It's enabled and deployed.")
+                except FolmError as e:
+                    QMessageBox.warning(self, APP_NAME, str(e))
+                self.refresh()
+        self.run(self.m.geck, edit, then=done)
 
     def play(self):
         try:

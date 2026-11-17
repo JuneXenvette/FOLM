@@ -10,6 +10,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
+import glob
 
 from . import deploy as dep, detect, fomod, loadorder
 
@@ -629,6 +631,96 @@ class Manager:
             except (ValueError, OSError) as e:
                 out.append({"source": p, "type": "error", "warnings": [str(e)], "plugins": []})
         return out
+
+    # ------------------------------------------------------------ GECK (mod making)
+    GECK_SETTINGS = {"General": {"bAllowMultipleMasterLoads": "1", "bUseMultibounds": "0"}}
+
+    def geck_path(self):
+        g = self.data["game_dir"]
+        for f in os.listdir(g):
+            if f.lower() == "geck.exe":
+                return os.path.join(g, f)
+        return None
+
+    def _geck_ini(self):
+        """Make GECK accept several master files (needed to build anything that uses a DLC or another mod's ESM)."""
+        d = os.path.join(self.data["prefix"], "pfx/drive_c/users/steamuser/Documents/My Games",
+                         os.path.basename(game_info(self.edition)["ini_dir"]))
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "GECKCustom.ini")
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines() if os.path.exists(path) else []
+        for section, keys in self.GECK_SETTINGS.items():
+            if f"[{section}]" not in [l.strip() for l in lines]:
+                lines += ["", f"[{section}]"]
+            at = [l.strip() for l in lines].index(f"[{section}]")
+            for k, v in keys.items():
+                if not any(l.split("=", 1)[0].strip().lower() == k.lower() for l in lines):
+                    lines.insert(at + 1, f"{k}={v}")
+        open(path, "w").write("\n".join(lines).strip() + "\n")
+        return path
+
+    def geck(self, edit_mod=None, log=_quiet, runner=None):
+        """Open GECK with this profile's mods; when it closes, capture what was saved.
+
+        edit_mod: put changes back into that mod. Otherwise new files go to this
+        profile's Overwrite, and keep_as_mod() turns them into a new mod.
+        Returns the list of captured files (game-relative).
+        """
+        self.need()
+        if edit_mod:
+            self.mod(edit_mod)
+        exe = self.geck_path()
+        if not exe and runner is None:
+            raise FolmError("GECK isn't installed. In Steam: Library > Tools > "
+                            "'Fallout New Vegas: Garden of Eden Creation Kit' (it installs into the game folder).")
+        if not self.deployed:
+            self.deploy(log)
+        self._geck_ini()
+        before = set(self.overwrite_files())
+        if runner:
+            runner()
+        else:
+            g = self.data["game_dir"]
+            proton = sorted(glob.glob(os.path.join(STEAM, "compatibilitytools.d", "*", "files", "bin", "wine")))
+            wine = proton[0] if proton else shutil.which("wine")
+            if not wine:
+                raise FolmError("couldn't find Proton's wine to run GECK")
+            loader = os.path.join(g, "nvse_loader.exe")
+            cmd = [wine, "nvse_loader.exe", "-editor"] if os.path.exists(loader) else [wine, os.path.basename(exe)]
+            env = dict(os.environ, WINEPREFIX=os.path.join(self.data["prefix"], "pfx"), WINEDEBUG="-all")
+            log("Opening GECK (close it when you're done; FOLM will collect what you saved)...")
+            subprocess.Popen(cmd, cwd=g, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).wait()
+            time.sleep(3)
+            while subprocess.run(["pgrep", "-fi", "[g]eck.exe"], capture_output=True).returncode == 0:
+                time.sleep(2)                       # nvse_loader returns early; wait for GECK itself
+        target = os.path.join(self.mods_dir, edit_mod) if edit_mod else self.overwrite_dir
+        dep.catch(self.manifest, target, log)
+        if edit_mod:
+            got = sorted(dep.walk_rel(target))
+            log(f"Changes saved into {edit_mod!r}. Deploy to put them in the game.")
+            return got
+        got = sorted(set(self.overwrite_files()) - before)
+        log(f"GECK closed: {len(got)} new or changed file(s) collected." if got else "GECK closed: nothing new was saved.")
+        return got
+
+    def keep_as_mod(self, name):
+        """Turn this profile's Overwrite (e.g. what you just saved in GECK) into a new mod."""
+        src = self.overwrite_dir
+        if not os.path.isdir(src) or not os.listdir(src):
+            raise FolmError("there's nothing in Overwrite to keep")
+        dest = os.path.join(self.mods_dir, name)
+        if os.path.exists(dest):
+            raise FolmError(f"a mod called {name!r} already exists")
+        was = self.deployed
+        if was:
+            self.undeploy()
+        os.rename(src, dest)
+        self.cur["mods"].append({"name": name, "enabled": True, "type": "folder", "notes": "Made in GECK.",
+                                 "tags": ["ours"], "category": "Our mods"})
+        self.save()
+        if was:
+            self.deploy()
+        return name
 
     def launch(self):
         """Start the game through Steam (Proton handles the rest)."""

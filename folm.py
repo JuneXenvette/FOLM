@@ -23,6 +23,9 @@ Game
   folm.py conflicts [NAME]            which mods overwrite which files, and who wins
   folm.py catch                       move files the game/tools created into the Overwrite mod
   folm.py play                        launch the game through Steam
+Making mods
+  folm.py geck [--edit MOD]           open GECK with your mods; collect what you save when it closes
+  folm.py keep NAME                   turn what you saved (Overwrite) into a new mod called NAME
 Fallout 3 -> New Vegas converter
   folm.py convert-check PLUGIN        report everything converting this FO3 plugin needs
 
@@ -232,6 +235,18 @@ def cmd_conflicts(a, m):
     print("\nLater mods win. Reorder with: folm.py move NAME --after OTHER")
 
 
+def cmd_geck(a, m):
+    got = m.geck(edit_mod=a.edit, log=print)
+    for f in got[:20]:
+        print(f"    {f}")
+    if got and not a.edit:
+        print("\nKeep it as a mod with:  folm.py keep \"My Mod Name\"")
+
+
+def cmd_keep(a, m):
+    print(f"Made mod {m.keep_as_mod(a.name)!r} (in 'Our mods'). It's enabled and deployed.")
+
+
 def cmd_play(a, m):
     print(f"Launching Steam app {m.launch()}...")
 
@@ -262,6 +277,8 @@ def main(argv=None):
     s.add_argument("name", nargs="?"); s.add_argument("--copy-from")
     for c in ("deploy", "undeploy", "order", "catch", "play"):
         sub.add_parser(c)
+    s = sub.add_parser("geck"); s.add_argument("--edit", metavar="MOD")
+    s = sub.add_parser("keep"); s.add_argument("name")
     s = sub.add_parser("loot"); s.add_argument("--update", action="store_true")
     s = sub.add_parser("conflicts"); s.add_argument("name", nargs="?"); s.add_argument("--limit", type=int, default=5)
     s = sub.add_parser("convert-check"); s.add_argument("plugin"); s.add_argument("--json", action="store_true")
@@ -272,7 +289,7 @@ def main(argv=None):
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "loot": cmd_loot, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "loot": cmd_loot, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
     try:
         cmds[a.cmd](a, m)
     except FolmError as e:
