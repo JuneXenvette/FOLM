@@ -838,8 +838,8 @@ class Manager:
         return path, re.sub(r'[\\/:*?"<>|]', "-", name), source
 
     def set_source(self, name, source):
-        """Remember where a mod came from (for update checks later)."""
-        self.mod(name)["source"] = source
+        """Remember a mod's Nexus page and version (for update checks later); 'source' stays the archive path."""
+        self.mod(name)["nexus"] = source
         self.save()
 
     def library_folders(self):
