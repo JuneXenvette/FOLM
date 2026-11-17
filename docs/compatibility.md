@@ -37,4 +37,7 @@ Fallout 3 GOTY, GE-Proton10-34, FOLM v0.3.
 - **Case-mismatched folders** (`Menus` vs `menus`, `NVSE/plugins` vs `nvse/plugins`): merged on deploy.
 - **TTW installer under Wine:** 12+ hours with per-file `oggenc2.exe`; ~21 minutes with `-NoOggEnc2`.
 - **Old FOMM C# installers:** now compiled with Mono against FOLM's FOMM shim and run in a bubblewrap sandbox (no network, no home folder, writes only to staging). Windows Forms layouts are font-matched so they aren't stretched off-window.
+- **RAR archives 7-Zip can't unpack** ("Unsupported Method"): FOLM falls back to `unrar`.
+- **`fomod/` with only info.xml** (OneTweak, Enhanced Blood): installed as plain mods, `fomod/` left out.
+- **Archives wrapping an old `.fomod` package** (BOG): unwrapped, the inner package installed by its own installer.
 - **TTW's required INI settings:** FalloutCustom.ini (read by JIP LN) with `SCharGenQuest=001FFFF8`.

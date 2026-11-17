@@ -143,12 +143,13 @@ def classify(files, dirs, source_name=""):
         fk = children(files, dirs, pre + fomod)
         if "moduleconfig.xml" in fk:
             r["type"] = "fomod-xml"
+            r["data_root"] = prefix
         elif "script.cs" in fk:
             r["type"] = "fomod-csharp"
+            r["data_root"] = prefix
         else:
-            r["type"] = "fomod-xml"
-            r["warnings"].append("fomod/ folder without ModuleConfig.xml or script.cs; info.xml only")
-        r["data_root"] = prefix
+            # only info.xml (mod name/author): no installer, so it's a plain mod
+            r["notes"] = "fomod/ has only info.xml (no installer): installed as a plain mod"
     elif "script.cs" in kids:
         r["type"] = "fomod-csharp"
         r["data_root"] = prefix
@@ -199,6 +200,12 @@ def detect(path):
     else:
         files, dirs = list_archive(path)
     r = classify(files, dirs, name)
+    # an archive that only wraps an old FOMM package (e.g. MyMod.rar -> MyMod.fomod)
+    inner = [f for f in files if f.lower().endswith(".fomod")]
+    rest = [f for f in files if not f.lower().endswith(".fomod") and not f.lower().endswith(DOC_EXTS)]
+    if r["type"] == "unknown" and len(inner) == 1 and not rest:
+        r = dict(r, type="nested", inner=inner[0], warnings=[],
+                 notes=f"wraps the package {os.path.basename(inner[0])}: FOLM unpacks it and installs that")
     r["source"] = path
     return r
 

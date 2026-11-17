@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (                                         # noqa: 
     QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView, QRadioButton, QScrollArea,
     QInputDialog, QLabel, QLineEdit, QListWidget, QMainWindow, QMenu, QMessageBox,
-    QPlainTextEdit, QPushButton, QSplitter, QTabWidget, QToolBar, QTreeWidget,
+    QPlainTextEdit, QPushButton, QSplitter, QTabWidget, QToolBar, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -244,6 +244,18 @@ class Main(QMainWindow):
         b.clicked.connect(self.reload)
         tb.addWidget(b)
         QShortcut(QKeySequence("F5"), self, activated=self.reload)
+        self.settings_btn = QToolButton()
+        self.settings_btn.setText("⚙ Settings")
+        self.settings_btn.setPopupMode(QToolButton.InstantPopup)
+        self.settings_menu = QMenu(self)
+        self.setting_actions = {}
+        for key, (default, label) in Manager.SETTINGS.items():
+            act = self.settings_menu.addAction(label)
+            act.setCheckable(True)
+            act.toggled.connect(lambda on, k=key: self.change_setting(k, on))
+            self.setting_actions[key] = act
+        self.settings_btn.setMenu(self.settings_menu)
+        tb.addWidget(self.settings_btn)
 
         split = QSplitter()
         left = QWidget()
@@ -380,6 +392,10 @@ class Main(QMainWindow):
             self.loading = False
             self.offer_setup()
             return
+        for key, act in self.setting_actions.items():
+            act.blockSignals(True)
+            act.setChecked(bool(m.setting(key)))
+            act.blockSignals(False)
         for p in m.profiles():
             self.profile.addItem(p)
         self.profile.setCurrentText(m.active)
@@ -737,6 +753,14 @@ class Main(QMainWindow):
             if p.lower().endswith((".7z", ".zip", ".rar")):
                 self.install(p)
                 break
+
+    def change_setting(self, key, on):
+        if self.loading:
+            return
+        self.m.set_setting(key, on)
+        self.say(f"{Manager.SETTINGS[key][1]}: {'on' if on else 'off'}.")
+        if self.m.deployed:
+            self.run(self.m.deploy)            # apply it right away (deploy is quick)
 
     def open_geck(self):
         names = [x["name"] for x in self.m.mods()]

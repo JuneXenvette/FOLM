@@ -107,6 +107,13 @@ pick mod file → DETECT type → INSTALL to its own staging folder (case-fixed)
 
 Mod makers: FOLM opens the GECK with your mods loaded and turns what you save into a managed mod. See **[Making mods on Linux](MODDING-ON-LINUX.md)**.
 
+## Archive invalidation
+
+On by default (**⚙ Settings** in the app). On deploy FOLM redates the game's archives and writes
+`bInvalidateOlderFiles=1` and `SInvalidationFile=` under `[Archive]` — into `FalloutCustom.ini` when JIP LN
+is installed, otherwise into the game's `Fallout.ini` (backed up first). Undeploy restores the exact previous
+values. No dummy archive needed.
+
 ## Load order & LOOT
 
 FOLM keeps two separate orders:
@@ -192,6 +199,8 @@ python3 folm.py note NAME "text"; python3 folm.py tag NAME fixes ttw
 python3 folm.py sort --preview              # arrange mods into sections (then 'sort' to apply)
 python3 folm.py category NAME "Visuals"      # override a mod's section ('auto' to reset)
 python3 folm.py convert-check SomeFO3Mod.esp  # what converting a Fallout 3 plugin to TTW needs
+python3 folm.py settings                      # e.g. archive invalidation (app: ⚙ Settings menu)
+python3 folm.py set archive-invalidation on   # loose mod files override the game's archives (default on)
 ```
 
 Add `--edition wanderer` for Fallout 3. Profiles, staged mods and backups live in `~/Games/FOLM` (override with `FOLM_HOME`).

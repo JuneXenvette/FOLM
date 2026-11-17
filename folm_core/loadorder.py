@@ -31,7 +31,8 @@ def scan_plugins(data_dir):
     return out, bad
 
 
-def apply(data_dir, plugins_txt, preferred, disabled, edition, state_path, log=print, rules=None):
+def apply(data_dir, plugins_txt, preferred, disabled, edition, state_path, log=print, rules=None,
+          redate_bsas=True):
     """rules: optional (extra_after, group_rank) from LOOT."""
     plugins, bad = scan_plugins(data_dir)
     extra_after, group_rank = rules or ({}, {})
@@ -47,7 +48,7 @@ def apply(data_dir, plugins_txt, preferred, disabled, edition, state_path, log=p
         t = int((BASE_TIME + i * STEP) * 1e9)
         os.utime(p, ns=(t, t))
 
-    bsas = [f for f in os.listdir(data_dir) if f.lower().endswith(".bsa")]
+    bsas = [f for f in os.listdir(data_dir) if f.lower().endswith(".bsa")] if redate_bsas else []
     for f in bsas:
         p = os.path.join(data_dir, f)
         state["mtimes"].setdefault(p, os.stat(p).st_mtime_ns)

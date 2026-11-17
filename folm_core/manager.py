@@ -13,7 +13,7 @@ import tempfile
 import time
 import glob
 
-from . import deploy as dep, detect, fomod, loadorder
+from . import archive as archive_mod, deploy as dep, detect, fomod, loadorder
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STEAM = os.path.expanduser("~/.local/share/Steam")
@@ -213,20 +213,32 @@ class Manager:
             return self._install_fomod(archive, name, r, chooser or (lambda s, g: fomod.default_choice(g)), log)
         if r["type"] == "fomod-csharp":
             return self._install_legacy(archive, name, r, log)
+        if r["type"] == "nested":
+            with tempfile.TemporaryDirectory(dir=self.dir) as tmp:
+                try:
+                    archive_mod.extract(archive, tmp)
+                except archive_mod.ArchiveError as e:
+                    raise FolmError(str(e))
+                inner = os.path.join(tmp, r["inner"])
+                log(f"  {os.path.basename(archive)} wraps {os.path.basename(inner)}: installing that")
+                return self.install(inner, name, chooser=chooser, log=log)
         if r["type"] not in ("data", "data+game-root", "game-root"):
             raise FolmError(f"FOLM can't install '{r['type']}' mods yet.")
         dest = os.path.join(self.mods_dir, name)
         if os.path.exists(dest):
             raise FolmError(f"A mod called {name!r} is already staged.")
         with tempfile.TemporaryDirectory(dir=self.dir) as tmp:
-            out = subprocess.run(["7z", "x", "-y", f"-o{tmp}", archive], capture_output=True, text=True)
-            if out.returncode != 0:
-                raise FolmError(f"extract failed: {out.stderr.strip()[:300]}")
+            try:
+                archive_mod.extract(archive, tmp)
+            except archive_mod.ArchiveError as e:
+                raise FolmError(str(e))
             os.makedirs(dest)
             if r["data_root"] is not None:
                 src = os.path.join(tmp, r["data_root"]) if r["data_root"] else tmp
                 for item in os.listdir(src):
                     if r["type"] == "data+game-root" and item in r["game_root_files"] and r["data_root"] == "":
+                        continue
+                    if item.lower() == "fomod":          # installer metadata, not game files
                         continue
                     shutil.move(os.path.join(src, item), dest)
             if r["game_root_files"]:
@@ -248,9 +260,10 @@ class Manager:
         if os.path.exists(dest):
             raise FolmError(f"A mod called {name!r} is already staged.")
         with tempfile.TemporaryDirectory(dir=self.dir) as tmp:
-            out = subprocess.run(["7z", "x", "-y", f"-o{tmp}", archive], capture_output=True, text=True)
-            if out.returncode != 0:
-                raise FolmError(f"extract failed: {out.stderr.strip()[:300]}")
+            try:
+                archive_mod.extract(archive, tmp)
+            except archive_mod.ArchiveError as e:
+                raise FolmError(str(e))
             root = os.path.join(tmp, r["data_root"]) if r["data_root"] else tmp
             try:
                 entries, choices, info = fomod.run(root, chooser, self.fomod_context(), log=log)
@@ -279,9 +292,10 @@ class Manager:
         if os.path.exists(dest):
             raise FolmError(f"A mod called {name!r} is already staged.")
         with tempfile.TemporaryDirectory(dir=self.dir) as tmp:
-            out = subprocess.run(["7z", "x", "-y", f"-o{tmp}", archive], capture_output=True, text=True)
-            if out.returncode != 0:
-                raise FolmError(f"extract failed: {out.stderr.strip()[:300]}")
+            try:
+                archive_mod.extract(archive, tmp)
+            except archive_mod.ArchiveError as e:
+                raise FolmError(str(e))
             root = os.path.join(tmp, r["data_root"]) if r["data_root"] else tmp
             os.makedirs(dest)
             plugins, _ = loadorder.scan_plugins(self.data_dir) if os.path.isdir(self.data_dir) else ({}, [])
@@ -315,10 +329,11 @@ class Manager:
         if r["type"] != "fomod-xml":
             raise FolmError("not an XML FOMOD")
         tmp = tempfile.TemporaryDirectory(dir=self.dir)
-        out = subprocess.run(["7z", "x", "-y", f"-o{tmp.name}", archive], capture_output=True, text=True)
-        if out.returncode != 0:
+        try:
+            archive_mod.extract(archive, tmp.name)
+        except archive_mod.ArchiveError as e:
             tmp.cleanup()
-            raise FolmError(f"extract failed: {out.stderr.strip()[:300]}")
+            raise FolmError(str(e))
         return tmp, (os.path.join(tmp.name, r["data_root"]) if r["data_root"] else tmp.name)
 
     def add_folder(self, name):
@@ -544,15 +559,66 @@ class Manager:
                        self.manifest, self.backups, log=log, overwrite_dir=self.overwrite_dir)
         lc = self.loot_check(log=log)
         rules = (lc[0], lc[1]) if lc else None
+        invalidate = self.setting("archive_invalidation")
         order, active, problems = loadorder.apply(self.data_dir, self.plugins_txt, self.cur["plugin_order"],
                                                   self.cur["disabled_plugins"], self.edition, self.lo_state,
-                                                  log=log, rules=rules)
+                                                  log=log, rules=rules, redate_bsas=invalidate)
+        self._archive_invalidation(invalidate, log)
         return {"order": order, "active": active, "problems": problems, "loot": lc[2] if lc else []}
 
     def undeploy(self, log=_quiet):
         self.need()
+        self._archive_invalidation(False, log)
         loadorder.restore(self.plugins_txt, self.lo_state, log=log)
         dep.undeploy(self.manifest, log=log, overwrite_dir=self.overwrite_dir)
+
+    # ------------------------------------------------------------ settings
+    SETTINGS = {
+        "archive_invalidation": (True, "Archive invalidation: loose mod files override the game's archives"),
+    }
+
+    def setting(self, key):
+        return self.data.get("settings", {}).get(key, self.SETTINGS[key][0])
+
+    def set_setting(self, key, value):
+        if key not in self.SETTINGS:
+            raise FolmError(f"unknown setting {key!r}; choose from: {', '.join(self.SETTINGS)}")
+        self.data.setdefault("settings", {})[key] = value
+        self.save()
+
+    ARCHIVE_KEYS = {"bInvalidateOlderFiles": "1", "SInvalidationFile": ""}
+    ini_state = property(lambda s: os.path.join(s.dir, "ini-state.json"))
+
+    def ini_dir(self):
+        return os.path.join(self.data["prefix"], "pfx/drive_c/users/steamuser/Documents/My Games",
+                            os.path.basename(game_info(self.edition)["ini_dir"]))
+
+    def _archive_invalidation(self, on, log=_quiet):
+        """Write (on) or undo (off) the [Archive] keys, reversibly.
+
+        With JIP LN installed the keys go in FalloutCustom.ini (the launcher never
+        rewrites it); otherwise in the game's own INI, after a one-time backup.
+        """
+        from . import ini
+        if os.path.exists(self.ini_state):                 # undo the last change first
+            st = json.load(open(self.ini_state))
+            ini.restore_keys(st["path"], "Archive", st["previous"])
+            os.remove(self.ini_state)
+        if not on:
+            return None
+        jip = dep.exists_ci(self.data_dir, "NVSE/Plugins/jip_nvse.dll")
+        game_ini = "Fallout.ini"
+        target = os.path.join(self.ini_dir(), "FalloutCustom.ini" if jip else game_ini)
+        if not jip and os.path.exists(target):
+            bak = os.path.join(self.dir, "backups", game_ini + ".folm-backup")
+            if not os.path.exists(bak):
+                os.makedirs(os.path.dirname(bak), exist_ok=True)
+                shutil.copy2(target, bak)
+        previous = ini.set_keys(target, "Archive", self.ARCHIVE_KEYS)
+        with open(self.ini_state, "w") as fh:
+            json.dump({"path": target, "previous": previous}, fh, indent=1)
+        log(f"Archive invalidation on ({os.path.basename(target)}).")
+        return target
 
     def catch(self, log=_quiet):
         self.need()

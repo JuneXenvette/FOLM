@@ -22,6 +22,8 @@ Game
   folm.py loot [--update]             LOOT's warnings for your setup (--update: refresh the masterlist)
   folm.py conflicts [NAME]            which mods overwrite which files, and who wins
   folm.py catch                       move files the game/tools created into the Overwrite mod
+  folm.py settings                    show FOLM's settings
+  folm.py set archive-invalidation on|off   loose mod files override the game's archives (default on)
   folm.py play [--no-watch]           launch through Steam; FOLM watches and writes a crash report
   folm.py crash-report                rebuild the report for the last play session (e.g. after a freeze)
 Making mods
@@ -257,6 +259,23 @@ def cmd_play(a, m):
         print(f"  * {f}")
 
 
+def cmd_settings(a, m):
+    m.need()
+    for key, (default, label) in m.SETTINGS.items():
+        print(f"  {key.replace('_', '-'):24} {'on' if m.setting(key) else 'off':4} {label}")
+
+
+def cmd_set(a, m):
+    m.need()
+    key = a.key.replace("-", "_")
+    if a.value.lower() not in ("on", "off"):
+        raise FolmError("use on or off")
+    m.set_setting(key, a.value.lower() == "on")
+    print(f"{a.key} is now {a.value.lower()}.")
+    if m.deployed:
+        m.deploy(log=print)
+
+
 def cmd_crash_report(a, m):
     path, crashed, findings = m.crash_report()
     print(f"{'Crash / abnormal exit' if crashed else 'No crash detected'} in the last session.")
@@ -292,6 +311,8 @@ def main(argv=None):
     for c in ("deploy", "undeploy", "order", "catch", "crash-report"):
         sub.add_parser(c)
     s = sub.add_parser("play"); s.add_argument("--no-watch", action="store_true")
+    sub.add_parser("settings")
+    s = sub.add_parser("set"); s.add_argument("key"); s.add_argument("value")
     s = sub.add_parser("geck"); s.add_argument("--edit", metavar="MOD")
     s = sub.add_parser("keep"); s.add_argument("name")
     s = sub.add_parser("loot"); s.add_argument("--update", action="store_true")
@@ -304,7 +325,7 @@ def main(argv=None):
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "loot": cmd_loot, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "loot": cmd_loot, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
     try:
         cmds[a.cmd](a, m)
     except FolmError as e:
