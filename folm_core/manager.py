@@ -127,6 +127,7 @@ class Manager:
     mods_dir = property(lambda s: os.path.join(s.dir, "mods"))
     manifest = property(lambda s: os.path.join(s.dir, "deployed.json"))
     lo_state = property(lambda s: os.path.join(s.dir, "loadorder-state.json"))
+    deploy_state = property(lambda s: os.path.join(s.dir, "deploy-state.json"))
     backups = property(lambda s: os.path.join(s.dir, "backups", "overwritten"))
     overwrite_name = property(lambda s: f"{OVERWRITE} [{s.data['active']}]")
     overwrite_dir = property(lambda s: os.path.join(s.mods_dir, s.overwrite_name))
@@ -566,6 +567,8 @@ class Manager:
                                                   self.cur["disabled_plugins"], self.edition, self.lo_state,
                                                   log=log, rules=rules, redate_bsas=invalidate)
         self._game_settings(apply=True, log=log)
+        with open(self.deploy_state, "w") as fh:
+            json.dump(self._fingerprint(), fh, indent=1)
         return {"order": order, "active": active, "problems": problems, "loot": lc[2] if lc else [],
                 "save_warnings": self.save_warnings(active)}
 
@@ -574,6 +577,52 @@ class Manager:
         self._game_settings(apply=False, log=log)
         loadorder.restore(self.plugins_txt, self.lo_state, log=log)
         dep.undeploy(self.manifest, log=log, overwrite_dir=self.overwrite_dir)
+        if os.path.exists(self.deploy_state):
+            os.remove(self.deploy_state)
+
+    # ------------------------------------------------------------ is the game up to date with FOLM?
+    def _mod_signature(self, name):
+        """Cheap fingerprint of a staged mod's files: count, total size, newest change."""
+        n = size = newest = 0
+        for dp, _, fn in os.walk(os.path.join(self.mods_dir, name)):
+            for f in fn:
+                try:
+                    st = os.stat(os.path.join(dp, f))
+                except OSError:
+                    continue
+                n, size, newest = n + 1, size + st.st_size, max(newest, st.st_mtime_ns)
+        return f"{n}:{size}:{newest}"
+
+    def _fingerprint(self):
+        names = [n for n in self.enabled() if n != self.overwrite_name]
+        return {"profile": self.active, "order": names, "mods": {n: self._mod_signature(n) for n in names},
+                "disabled_plugins": sorted(d.lower() for d in self.cur["disabled_plugins"]),
+                "plugin_order": list(self.cur["plugin_order"]), "settings": dict(self.data.get("settings", {}))}
+
+    def pending_changes(self):
+        """What the game doesn't have yet, in plain words ([] = the game matches FOLM)."""
+        self.need()
+        if not self.deployed:
+            return ["Your mods aren't in the game yet."] if self.enabled() else []
+        try:
+            old = json.load(open(self.deploy_state))
+        except (OSError, ValueError):
+            return ["FOLM hasn't recorded what's in the game yet (deploy once to start tracking changes)."]
+        new = self._fingerprint()
+        out = []
+        if old.get("profile") != new["profile"]:
+            return [f"You switched to the profile '{new['profile']}'."]
+        before, now = old.get("mods", {}), new["mods"]
+        out += [f"New mod: {n}" for n in new["order"] if n not in before]
+        out += [f"Turned off: {n}" for n in old.get("order", []) if n not in now]
+        out += [f"Updated: {n} (its files changed)" for n in new["order"] if n in before and before[n] != now[n]]
+        if [n for n in old.get("order", []) if n in now] != [n for n in new["order"] if n in before]:
+            out.append("Mod order changed (which mod wins a file conflict)")
+        if old.get("disabled_plugins") != new["disabled_plugins"] or old.get("plugin_order") != new["plugin_order"]:
+            out.append("Plugins turned on/off or moved")
+        if old.get("settings") != new["settings"]:
+            out.append("Game settings changed (⚙ Settings)")
+        return out
 
     # ------------------------------------------------------------ settings
     SETTINGS = {

@@ -136,6 +136,11 @@ def cmd_add(a, m):
 def cmd_list(a, m):
     m.need()
     print(f"{m.data['game']} | profile {m.active!r} | {'deployed' if m.deployed else 'not deployed'}")
+    pending = m.pending_changes()
+    if pending and m.deployed:
+        print("  Not in the game yet (run 'folm.py deploy', or just 'folm.py play'):")
+        for p in pending:
+            print(f"    • {p}")
     for i, mod in enumerate(m.mods(), 1):
         tags = f"  #{' #'.join(mod.get('tags', []))}" if mod.get("tags") else ""
         print(f"  {i:2}. [{'x' if mod['enabled'] else ' '}] {mod['name']}  ({mod.get('type', '?')}){tags}")
@@ -330,6 +335,12 @@ def cmd_health(a, m):
 
 
 def cmd_play(a, m):
+    pending = m.pending_changes()
+    if pending and not a.no_deploy:
+        print("Putting your changes in the game first:")
+        for p in pending:
+            print(f"  • {p}")
+        cmd_deploy(a, m)
     items = m.preflight()
     if items:
         print("Before you play:")
@@ -406,6 +417,7 @@ def main(argv=None):
         sub.add_parser(c)
     s = sub.add_parser("play"); s.add_argument("--no-watch", action="store_true")
     s.add_argument("--force", action="store_true", help="play even if the pre-Play checks find problems")
+    s.add_argument("--no-deploy", action="store_true", help="don't deploy changes first")
     sub.add_parser("preflight", help="run the pre-Play checks")
     sub.add_parser("nexus-login", help="store your Nexus personal API key on this PC")
     sub.add_parser("nexus-logout", help="remove the stored Nexus API key")

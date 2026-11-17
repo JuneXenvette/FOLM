@@ -153,6 +153,17 @@ kNVSE, UIO, a crash logger and YUP (YUPTTW for TTW). Fallout 3 has its own list 
 Patcher, Command Extender, High FPS Physics Fix…). The page also covers the Linux-only part (FPS cap,
 windowed mode, low RAM) and what to avoid. Lists follow ModdingLinked's community guides.
 
+## Deploy, explained (and why Play handles it for you)
+
+Ticking a mod in FOLM doesn't change the game yet. **Deploy** is the step that puts your ticked mods into
+the game folder and sets the load order. It takes a moment, and **Undeploy** takes it all back out exactly.
+
+You don't have to remember it: when something isn't in the game yet, the **Deploy** button turns gold and
+says how many changes are waiting (hover it for the list: new mods, mods turned off, updated mods, order or
+settings changes). **▶ Play** checks too and offers **Deploy and Play**, so new mods are always in the game
+before it starts. On the command line, `folm.py play` deploys first (`--no-deploy` skips that) and
+`folm.py list` shows what's waiting.
+
 ## Saves, FPS cap and pre-Play checks
 
 - **Save safety:** FOLM reads the plugin list stored in each save. Untick a mod your recent saves use and it

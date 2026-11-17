@@ -551,11 +551,22 @@ class Main(QMainWindow):
         self.ow_list.addItems(files[:2000])
         self.lib_folders.addItems(m.library_folders())
 
-        state = "deployed" if m.deployed else "not deployed"
+        pending = m.pending_changes()
+        if pending:
+            self.btn_deploy.setText(f"Deploy  ({len(pending)} waiting)")
+            self.btn_deploy.setStyleSheet("background: #b8860b; color: black; font-weight: bold; padding: 4px 10px;")
+            self.btn_deploy.setToolTip("These changes aren't in the game yet:\n" + "\n".join(f"• {p}" for p in pending)
+                                       + "\n\nClick to put them in the game (▶ Play also offers to).")
+        else:
+            self.btn_deploy.setText("Deploy")
+            self.btn_deploy.setStyleSheet("")
+            self.btn_deploy.setToolTip("Everything in FOLM is in the game. Deploy again any time; it's safe.")
+        state = ("deployed" if m.deployed else "not deployed") + (f" · {len(pending)} change(s) not in the game yet"
+                                                                   if pending and m.deployed else "")
         warn = f" · ⚠ {len(problems)} load-order problem(s)" if problems else ""
         self.status.setText(f"{m.data['game']} · profile '{m.active}' · {len(m.mods())} mod(s) · "
                             f"{state} · {len(by_pair)} conflict group(s){warn}{self.loot_summary}")
-        self.btn_play.setEnabled(m.deployed or not m.mods())
+        self.btn_play.setEnabled(True)                      # Play offers to deploy first if needed
         self.loading = False
         self.on_select(self.mods.currentItem(), None)
 
@@ -990,11 +1001,46 @@ class Main(QMainWindow):
         self.run(lambda: health.check(self.m), then=done)
 
     def play(self):
+        """Play: first make sure the game has everything ticked in FOLM (deploy if not), then check, then launch."""
+        try:
+            pending = self.m.pending_changes()
+        except FolmError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return
+        if not pending:
+            return self._play_checked()
+        box = QMessageBox(self)
+        box.setWindowTitle("Put your changes in the game?")
+        box.setIcon(QMessageBox.Question)
+        box.setText("Some changes in FOLM aren't in the game yet:\n\n" +
+                    "\n".join(f"• {p}" for p in pending[:8]) + (f"\n• …and {len(pending) - 8} more" if len(pending) > 8 else ""))
+        box.setInformativeText("FOLM can deploy them now (copy your mods into the game and set the load order). "
+                               "It only takes a moment and can be undone with Undeploy.")
+        go = box.addButton("Deploy and Play", QMessageBox.AcceptRole)
+        without = box.addButton("Play without them", QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(go)
+        box.exec()
+        if box.clickedButton() is go:
+            def deployed(r):
+                if r is None:
+                    return
+                for save, miss in r.get("save_warnings", []):
+                    self.say(f"⚠ Save '{save}' needs {', '.join(miss)}, which isn't active now.")
+                self.say(f"Deployed: {len(r['active'])} active plugin(s). Starting the game…")
+                self._play_checked()
+            self.run(self.m.deploy, then=deployed)
+        elif box.clickedButton() is without:
+            self._play_checked(skip_deploy_note=True)
+
+    def _play_checked(self, skip_deploy_note=False):
         try:
             items = self.m.preflight()
         except FolmError as e:
             QMessageBox.warning(self, APP_NAME, str(e))
             return
+        if skip_deploy_note:
+            items = [i for i in items if "aren't deployed" not in i[1]]
         if items:
             errors = any(sev == "error" for sev, _ in items)
             box = QMessageBox(self)
