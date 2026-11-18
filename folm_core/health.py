@@ -32,9 +32,21 @@ def _f(status, area, text, fix=""):
     return {"status": status, "area": area, "text": text, "fix": fix}
 
 
+def _folm_written(m):
+    """Game files FOLM itself writes on deploy (e.g. dxvk.conf for the FPS cap)."""
+    import json
+    try:
+        return {f["path"] for f in json.load(open(m.ini_state)).get("files", [])}
+    except (OSError, ValueError):
+        return set()
+
+
 def _deployed_files(m, manifest):
     out, changed, gone, empty = [], [], [], []
+    ours = _folm_written(m)
     for rec in manifest.get("files", []):
+        if rec["target"] in ours:
+            continue
         t, s = rec["target"], rec["source"]
         rel = os.path.relpath(t, m.data["game_dir"])
         try:
@@ -208,16 +220,58 @@ def _last_launch(m, dlls):
     return out
 
 
+def _pe_machine(path):
+    """'x86', 'x64' or None."""
+    import struct
+    try:
+        with open(path, "rb") as fh:
+            d = fh.read(4096)
+        pe = struct.unpack_from("<I", d, 0x3C)[0]
+        mach = struct.unpack_from("<H", d, pe + 4)[0]
+        return {0x14C: "x86", 0x8664: "x64"}.get(mach)
+    except (OSError, struct.error):
+        return None
+
+
+def _is_dxvk(path):
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return False
+    return b"dxvk" in data.lower() or b"DXVK_" in data
+
+
 def _graphics(m, manifest):
     ours = {os.path.basename(r["target"]).lower(): r["mod"] for r in manifest.get("files", [])
             if os.path.dirname(r["target"]) == m.data["game_dir"]}
     out = []
     for f in os.listdir(m.data["game_dir"]):
-        if f.lower() in GRAPHICS_DLLS:
-            src = f"from {ours[f.lower()]}" if f.lower() in ours else "not from a FOLM mod"
+        if f.lower() not in GRAPHICS_DLLS:
+            continue
+        p = os.path.join(m.data["game_dir"], f)
+        src = f"from {ours[f.lower()]}" if f.lower() in ours else "not from a FOLM mod"
+        if _pe_machine(p) == "x64":
+            out.append(_f("error", "Graphics (Proton)", f"{f} in the game folder ({src}) is a 64-bit DLL; the 32-bit "
+                          "game ignores it.", "Use the 32-bit (x86 / x32) file from that mod."))
+        elif _is_dxvk(p):
+            out.append(_f("ok", "Graphics (Proton)", f"{f} in the game folder ({src}) is a DXVK build: it replaces "
+                          "Proton's own DXVK, which is fine. FOLM's FPS cap still applies (dxvk.conf)."))
+        else:
             out.append(_f("warn", "Graphics (Proton)", f"{f} in the game folder ({src}) replaces DXVK, the Direct3D "
                           "layer Proton uses. ENB/ReShade builds made for Windows often crash or run slowly this way.",
                           "Turn off the mod it came from, or use a Linux-friendly alternative (e.g. vkBasalt)."))
+    pdir = dep.exists_ci(m.data_dir, f"{EXTENDER[m.edition][0]}/Plugins")
+    if pdir:
+        have = {f.lower() for f in os.listdir(pdir)}
+        if {"vegasshaders.dll", "newvegasreloaded.dll"} <= have:
+            out.append(_f("error", "Graphics (Proton)", "Two renderers are installed: VegasShaders.dll and "
+                          "NewVegasReloaded.dll. Only one may load (doubled effects, flicker, crashes).",
+                          "Turn off New Vegas Reloaded; keep Vegas Shaders."))
+        if dep.exists_ci(pdir, "VSDxvk"):
+            out.append(_f("warn", "Graphics (Proton)", "An old Vegas Shaders DXVK copy is in Data/NVSE/Plugins/VSDxvk "
+                          "(can make the launcher open again and again).",
+                          "Remove that folder; the DXVK build's d3d9.dll goes next to the game's exe."))
     if not out:
         out.append(_f("ok", "Graphics (Proton)", "No Windows graphics DLLs in the game folder; DXVK handles Direct3D."))
     return out

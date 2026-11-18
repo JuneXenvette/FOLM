@@ -719,10 +719,14 @@ class Manager:
             bak = None
             lines = []
             if os.path.exists(conf):
+                # Move it aside rather than editing it: a dxvk.conf deployed from a mod is a hard link to the
+                # mod's own copy, and writing to it would change the mod. Moving keeps the link intact for restore.
                 bak = os.path.join(self.dir, "backups", "dxvk.conf.folm-backup")
                 os.makedirs(os.path.dirname(bak), exist_ok=True)
-                shutil.copy2(conf, bak)
                 lines = [l for l in open(conf).read().splitlines() if not l.strip().startswith("d3d9.maxFrameRate")]
+                if os.path.exists(bak):
+                    os.remove(bak)
+                shutil.move(conf, bak)
             lines.append(f"d3d9.maxFrameRate = {cap}")
             with open(conf, "w") as fh:
                 fh.write("\n".join(lines) + "\n")
