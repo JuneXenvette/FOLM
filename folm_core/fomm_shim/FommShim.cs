@@ -94,9 +94,13 @@ namespace fomm.Scripting
             return true;
         }
 
+        // FOMM scripts use this both for copying a data file and for copying a file out of the mod's own
+        // archive (e.g. BOG: CopyDataFile("CALI.nif", "meshes/.../femaleupperbody.nif")). Look in this
+        // install first, then the archive, then the game.
         public static bool CopyDataFile(string from, string to)
         {
-            string src = Resolve(Staging, from) ?? Resolve(View, from);
+            string src = new[] { Resolve(Staging, from), Resolve(Root, from), Resolve(View, from) }
+                .FirstOrDefault(x => x != null && File.Exists(x));
             if (src == null) return false;
             File.Copy(src, StagingPath(to), true);
             Installed.Add(Norm(to));
