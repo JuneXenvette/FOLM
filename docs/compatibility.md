@@ -53,3 +53,18 @@ Readius. It overrides only Readius's own quest script: Readius waits while the V
 and if any script puts the arm Pip-Boy (or Pimp-Boy, glove) back on, Readius takes it off again. No TTW
 record is changed. Load it after Readius_NV.esp (LOOT does). Compiled with FOLM's `scriptcode` module
 (GECK's own bytecode patterns; see NOTES.md). Not yet play-tested through a Vault 101 start.
+
+### Vegas Shaders 1.1.0 (Nexus 100538) under Proton: ✅ works
+
+Tested 2026-11-18, TTW 3.4, New Vegas start, i3-7100 + RX 580, 1920x1080, Proton 10 with the mod's own DXVK build
+(`d3d9.dll` next to the exe, "Vegas Shaders DXVK extension 1.6 on DXVK v3.0.1": compute paths available).
+Default settings: TAA + FSR 1 at RenderScale 0.67, about 35–40 FPS outdoors (frame time 25–29 ms).
+
+- **Needs, though its page doesn't say:** LOD Flicker Fix - NVSE (91705) and Vanilla Plus Terrain (92519), which
+  both need Shader Loader - NVSE (87814). Without them the plugin shows "… cannot be used without it" and turns off.
+  FOLM's requirement scan reads this from the DLL.
+- Optional and probably redundant: Parallax Shaders - Terrain (92708). Vegas Shaders has its own terrain parallax
+  ([Shaders.Terrain.Parallax], on by default).
+- Menu key **O**; settings are saved to `Data/NVSE/Plugins/VegasShaders.toml` only when you Save in the menu.
+- Performance options for weaker PCs ([Main.Main.ReducedQuality]): AOLowRes, GodRaysLowRes, ParallaxLite,
+  CachedDistantShadows; [Shaders.Terrain.Parallax] HighQuality = false; FSR RenderScale.
