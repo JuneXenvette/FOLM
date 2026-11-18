@@ -226,6 +226,8 @@ Each profile keeps its own list. CLI: `folm.py handled list|add|remove`.
 Before marking, make sure the patch fits the TTW version you're using. For example, *Readius TTW Fix* (2015, for TTW 2.x)
 rewrites TTW's Vault 101 quests and scripts (MQ04, CG02–CG04) with their old versions, and TTW 3.4 has since changed
 all four. It would roll back TTW's fixes, so leave it off.
+FOLM can build a proper one instead, from your own copy of Readius (see `tools/make_readius_ttw_patch.py` and
+[compatibility notes](docs/compatibility.md)).
 
 ## Compatibility
 

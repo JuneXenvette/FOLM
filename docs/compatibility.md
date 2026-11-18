@@ -41,3 +41,15 @@ Fallout 3 GOTY, GE-Proton10-34, FOLM v0.3.
 - **`fomod/` with only info.xml** (OneTweak, Enhanced Blood): installed as plain mods, `fomod/` left out.
 - **Archives wrapping an old `.fomod` package** (BOG): unwrapped, the inner package installed by its own installer.
 - **TTW's required INI settings:** FalloutCustom.ini (read by JIP LN) with `SCharGenQuest=001FFFF8`.
+
+### Pip-Boy Readius NV 1.1 with TTW 3.x: FOLM-built patch
+
+LOOT flags Readius as incompatible with TTW 3.2+. The 2015 *Readius TTW Fix* is for TTW 2.x: it rewrites TTW's
+Vault 101 quests (CG02–CG04, Tranquility Lane) with their old versions, and its own Readius scripts never compiled
+(no Readius master). Don't use it with TTW 3.
+
+`tools/make_readius_ttw_patch.py "<Readius_NV.esp>" "Readius TTW Patch.esp"` builds a patch from your copy of
+Readius. It overrides only Readius's own quest script: Readius waits while the Vault 101 childhood quests run,
+and if any script puts the arm Pip-Boy (or Pimp-Boy, glove) back on, Readius takes it off again. No TTW
+record is changed. Load it after Readius_NV.esp (LOOT does). Compiled with FOLM's `scriptcode` module
+(GECK's own bytecode patterns; see NOTES.md). Not yet play-tested through a Vault 101 start.
