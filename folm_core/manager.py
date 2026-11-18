@@ -203,6 +203,18 @@ class Manager:
         return fomod.Context(files, active)
 
     def install(self, archive, name=None, chooser=None, log=_quiet):
+        """Stage a mod (see _install), then say what it needs that isn't installed."""
+        result = self._install(archive, name, chooser, log)
+        try:
+            from . import requires
+            for r in requires.check(self, only=result[0]):
+                log(("  ✖ " if r["severity"] == "error" else "  ⚠ " if r["severity"] == "warn" else "  ℹ ")
+                    + requires.describe(r))
+        except Exception as e:                       # never let the check spoil an install
+            log(f"  (couldn't check its requirements: {e})")
+        return result
+
+    def _install(self, archive, name=None, chooser=None, log=_quiet):
         """Stage a mod from an archive. Returns (name, detect_result).
 
         FOMOD (XML) mods need a chooser(step, group) -> [option indexes]; without one,
@@ -223,7 +235,10 @@ class Manager:
                     raise FolmError(str(e))
                 inner = os.path.join(tmp, r["inner"])
                 log(f"  {os.path.basename(archive)} wraps {os.path.basename(inner)}: installing that")
-                return self.install(inner, name, chooser=chooser, log=log)
+                result = self._install(inner, name, chooser=chooser, log=log)
+            self.mod(result[0])["source"] = os.path.abspath(archive)   # the download, not the temporary inner file
+            self.save()
+            return result
         if r["type"] == "source":
             raise FolmError(f"{os.path.basename(archive)} is the mod's source code (for programmers), not something "
                             "to install. Download the mod's main file instead.")
@@ -855,10 +870,10 @@ class Manager:
         if subprocess.run(["pgrep", "-x", "steam"], capture_output=True).returncode != 0:
             out.append(("warn", "Steam isn't running. FOLM will try to start it, but the game may show "
                                 "'Application load error 65434' if Steam isn't ready."))
-        from . import health
-        for dll, need, name, url in health.missing_plugin_needs(self):
-            out.append(("error", f"{dll} needs {name} ({need}), which isn't installed; the game will show an error. "
-                                 f"Get it from {url} (Mod Manager Download), then Deploy."))
+        from . import requires
+        for r in requires.check(self):
+            if r["severity"] in ("error", "warn"):
+                out.append((r["severity"], requires.describe(r)))
         if self._exe_is_4gb() is False and dep.exists_ci(self.data_dir, "NVSE/Plugins") is not None:
             out.append(("error", f"{game_info(self.edition)['exe']} isn't 4GB-patched any more (verifying files in "
                                  "Steam undoes it). Re-run the 4GB patcher, or xNVSE and its plugins won't load."))

@@ -144,6 +144,22 @@ supported yet.
 
 Each problem comes with what to do about it.
 
+## Requirements check ("what does this mod need?")
+
+Mod pages don't always list everything. Vegas Shaders' Nexus page lists xNVSE, JIP and the 4GB patcher, but the
+plugin refuses to run without **LOD Flicker Fix** and **Vanilla Plus Terrain**, and you only find out from a box
+at game start. FOLM checks three things, after every install, in the 🩺 health check and before Play:
+
+| Source | Shown as | What it means |
+|---|---|---|
+| The plugin's own startup check | ✖ error | FOLM reads the script extender plugin (.dll) for messages like "LOD Flicker Fix not found … cannot be used without it" next to `LODFlickerFix.dll`. It also catches "not compatible with X.dll" clashes. Only messages that say the plugin won't run count; optional extras it just logs don't. |
+| FOLM's own list | ✖ error | Requirements found by testing, with download links. |
+| The mod's Nexus "Requirements" list | ⚠ warning | For mods downloaded from Nexus (the mod id is in the file name). Fetched from Nexus's public API (only mod ids are sent, no account needed), saved for a week, used offline. |
+
+Linux-aware: Windows runtimes that Nexus pages list (Visual C++, DirectX) are skipped, because Proton provides them.
+xNVSE and the 4GB patch are recognised however you installed them. Entries the author marks "only for …" or "optional"
+show as ℹ notes, not warnings. CLI: `folm.py requires [MOD] [--offline]`.
+
 ## Recommended mods
 
 For a smooth game on Linux, start with the engine and stability mods in
@@ -297,6 +313,7 @@ python3 folm.py set fps-cap 120                # or off; written to dxvk.conf on
 python3 folm.py set profile-saves on          # each profile keeps its own saves
 python3 folm.py preflight                     # the pre-Play checks (play runs them too; --force to skip)
 python3 folm.py health                        # are mods really working? (files, plugins, what loaded)
+python3 folm.py requires                      # what mods need that isn't installed (plugin checks + Nexus lists)
 python3 folm.py handled add PLUGIN TEXT --by MOD --note ...   # mark a LOOT message as handled (list / remove)
 python3 folm.py nexus-login                   # connect your Nexus account (personal API key)
 python3 folm.py nxm "nxm://newvegas/mods/…"   # download + install a Mod Manager Download link

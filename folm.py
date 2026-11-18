@@ -366,6 +366,19 @@ def cmd_health(a, m):
     return 1 if any(f["status"] == "error" for f in findings) else 0
 
 
+def cmd_requires(a, m):
+    from folm_core import requires
+    items = requires.check(m, online=not a.offline, only=a.mod)
+    icon = {"error": "✖", "warn": "⚠", "info": "ℹ"}
+    for r in items:
+        print(f"  {icon[r['severity']]} {requires.describe(r)}")
+    if not items:
+        print("Every mod has what it needs.")
+    else:
+        print("✖ = the plugin itself won't run   ⚠ = its Nexus page lists it as required   ℹ = only for some setups")
+    return 1 if any(r["severity"] == "error" for r in items) else 0
+
+
 def cmd_play(a, m):
     pending = m.pending_changes()
     if pending and not a.no_deploy:
@@ -457,6 +470,9 @@ def main(argv=None):
     s.add_argument("url"); s.add_argument("--auto", action="store_true", help="FOMOD: take the defaults")
     s.add_argument("--here", action="store_true", help="don't hand the link to an open FOLM window")
     sub.add_parser("health", help="check that mods are really working (files, plugins, last launch)")
+    rq = sub.add_parser("requires", help="what mods need that isn't installed (plugin checks + Nexus requirement lists)")
+    rq.add_argument("mod", nargs="?", help="only this mod")
+    rq.add_argument("--offline", action="store_true", help="don't ask Nexus; use the saved lists")
     sub.add_parser("settings")
     s = sub.add_parser("set"); s.add_argument("key"); s.add_argument("value")
     s = sub.add_parser("geck"); s.add_argument("--edit", metavar="MOD")
@@ -475,7 +491,7 @@ def main(argv=None):
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "health": cmd_health, "nexus-login": cmd_nexus_login, "nexus-logout": cmd_nexus_logout, "nxm": cmd_nxm, "loot": cmd_loot, "handled": cmd_handled, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "health": cmd_health, "requires": cmd_requires, "nexus-login": cmd_nexus_login, "nexus-logout": cmd_nexus_logout, "nxm": cmd_nxm, "loot": cmd_loot, "handled": cmd_handled, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
     try:
         sys.exit(cmds[a.cmd](a, m) or 0)
     except FolmError as e:
