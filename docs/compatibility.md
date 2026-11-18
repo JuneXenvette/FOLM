@@ -52,7 +52,7 @@ Vault 101 quests (CG02–CG04, Tranquility Lane) with their old versions, and it
 Readius. It overrides only Readius's own quest script: Readius waits while the Vault 101 childhood quests run,
 and if any script puts the arm Pip-Boy (or Pimp-Boy, glove) back on, Readius takes it off again. No TTW
 record is changed. Load it after Readius_NV.esp (LOOT does). Compiled with FOLM's `scriptcode` module
-(GECK's own bytecode patterns; see NOTES.md). Not yet play-tested through a Vault 101 start.
+(GECK's own bytecode patterns; see development-log.md). Not yet play-tested through a Vault 101 start.
 
 ### Vegas Shaders 1.1.0 (Nexus 100538) under Proton: ✅ works
 

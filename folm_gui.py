@@ -238,6 +238,8 @@ class Main(QMainWindow):
         self.setAcceptDrops(True)
         self.jobs = []
         self.loading = False
+        self.setup_asked = set()            # editions already offered setup this session
+        self.tools_told = False
         self.m = Manager("courier")
         self.bridge = ChoiceBridge(self)
         self._listen_for_links()
@@ -448,12 +450,15 @@ class Main(QMainWindow):
         self.ow_list.clear()
         self.lib_folders.clear()
         ready = m.ready
-        for w in (self.btn_deploy, self.btn_undeploy, self.btn_play, self.profile):
+        for w in (self.btn_deploy, self.btn_undeploy, self.profile):
             w.setEnabled(ready)
+        self.btn_play.setEnabled(True)                      # not set up yet: Play offers the setup
         if not ready:
-            self.status.setText(f"{EDITION_LABELS[m.edition]} isn't set up yet.")
+            self.status.setText(f"{EDITION_LABELS[m.edition]} isn't set up yet. Press ▶ Play to set it up.")
             self.loading = False
-            self.offer_setup()
+            if m.edition not in self.setup_asked:          # ask once; refocusing the window doesn't re-ask
+                self.setup_asked.add(m.edition)
+                self.offer_setup()
             return
         for key, act in self.setting_actions.items():
             act.blockSignals(True)
@@ -586,6 +591,13 @@ class Main(QMainWindow):
 
     def offer_setup(self):
         g = EDITION_LABELS[self.m.edition]
+        from folm_core import setupcheck
+        lines = [] if self.tools_told else setupcheck.report()
+        self.tools_told = True
+        if lines:                                        # first start: say once what this PC is missing
+            QMessageBox.information(self, "Before you start",
+                                    "FOLM uses a few system tools. Missing on this PC:\n\n" + "\n".join(lines) +
+                                    "\n\nYou can carry on; FOLM tells you again only when a mod needs one.")
         r = QMessageBox.question(self, "Set up FOLM", f"Set up {g} now?\n\nFOLM will look for the game in "
                                  "your Steam libraries. Choose No to pick the game folder yourself.",
                                  QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
@@ -649,6 +661,7 @@ class Main(QMainWindow):
         if self.loading:
             return
         self.m = Manager(self.edition.itemData(i))
+        self.setup_asked.discard(self.m.edition)       # choosing an edition is a request to set it up
         self.refresh()
 
     def on_profile(self, _i):
@@ -1081,6 +1094,9 @@ class Main(QMainWindow):
 
     def play(self):
         """Play: first make sure the game has everything ticked in FOLM (deploy if not), then check, then launch."""
+        if not self.m.ready:
+            self.offer_setup()
+            return
         try:
             pending = self.m.pending_changes()
         except FolmError as e:

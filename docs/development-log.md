@@ -1,6 +1,12 @@
-# Project notes
+# Development log
 
-Running log of setup decisions and what we found. Newest at the bottom.
+The raw diary kept while FOLM was built (November 2026), newest at the bottom. It's kept because it
+records what actually works on Linux and why: Proton quirks, installer tricks, mod-specific findings,
+and the reasons behind design decisions. "User" means the project's original author, whose own
+playthrough was the test bed (Linux Mint 22 Cinnamon on X11, i3-7100T, RX 580, 8 GB RAM, Proton 10).
+
+Paths like `~/Games/FOLM/...` are FOLM's default data folder. Some early entries describe things that
+changed later (for example, FOLM no longer runs the TTW installer itself); later entries say so.
 
 ## Plan
 Base: Fallout New Vegas + Fallout 3 GOTY + Tale of Two Wastelands (TTW).

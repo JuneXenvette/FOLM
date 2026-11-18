@@ -343,6 +343,15 @@ def print_preflight(items):
         print(f"  {'✖' if sev == 'error' else '!'} {msg}")
 
 
+def cmd_doctor(a, m):
+    from folm_core import setupcheck
+    lines = setupcheck.report()
+    if setupcheck.wayland():
+        lines.append("ℹ Wayland session: the game runs fine, but window fixes (borderless) need X11 or XWayland.")
+    print("\n".join(lines) if lines else "All the system tools FOLM uses are installed.")
+    return 1 if any(i["required"] for i in setupcheck.missing()) else 0
+
+
 def cmd_preflight(a, m):
     items = m.preflight()
     if not items:
@@ -464,6 +473,7 @@ def main(argv=None):
     s.add_argument("--force", action="store_true", help="play even if the pre-Play checks find problems")
     s.add_argument("--no-deploy", action="store_true", help="don't deploy changes first")
     sub.add_parser("preflight", help="run the pre-Play checks")
+    sub.add_parser("doctor", help="check this PC has the system tools FOLM uses")
     sub.add_parser("nexus-login", help="store your Nexus personal API key on this PC")
     sub.add_parser("nexus-logout", help="remove the stored Nexus API key")
     s = sub.add_parser("nxm", help="download + install a Nexus 'Mod Manager Download' link")
@@ -491,7 +501,7 @@ def main(argv=None):
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "health": cmd_health, "requires": cmd_requires, "nexus-login": cmd_nexus_login, "nexus-logout": cmd_nexus_logout, "nxm": cmd_nxm, "loot": cmd_loot, "handled": cmd_handled, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "doctor": cmd_doctor, "health": cmd_health, "requires": cmd_requires, "nexus-login": cmd_nexus_login, "nexus-logout": cmd_nexus_logout, "nxm": cmd_nxm, "loot": cmd_loot, "handled": cmd_handled, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
     try:
         sys.exit(cmds[a.cmd](a, m) or 0)
     except FolmError as e:

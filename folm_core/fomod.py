@@ -51,7 +51,8 @@ def load_config(module_root):
     path = _find_ci(module_root, "fomod/ModuleConfig.xml")
     if not path:
         raise FomodError("no fomod/ModuleConfig.xml found")
-    raw = open(path, "rb").read()
+    with open(path, "rb") as fh:
+        raw = fh.read()
     try:
         root = ET.fromstring(raw)
     except ET.ParseError:

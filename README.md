@@ -1,107 +1,112 @@
 <p align="center"><img src="assets/folm-logo.png" alt="FOLM logo" width="480"></p>
 
-# The FOLM Project
+# FOLM — Fallout Linux Manager
 
-> Unofficial fan-made tools. Not affiliated with or endorsed by Bethesda Softworks.
+> Unofficial fan-made tool. Not affiliated with or endorsed by Bethesda Softworks, Obsidian Entertainment,
+> Nexus Mods, LOOT or the Tale of Two Wastelands team.
 
-## Mission
+**A mod manager for Fallout: New Vegas (with optional Tale of Two Wastelands) and Fallout 3, built for Linux.**
+The game runs through Steam and Proton as usual. FOLM installs mods, puts them into the game, sorts the
+load order, applies the Proton-specific fixes these games need, and tells you in plain words when something
+is wrong. No Wine knowledge needed.
 
-**Linux players get the Windows modding experience: any mod, installed in a
-click, working the first time.**
+Proven on a real setup: TTW 3.4 with about 50 mods (31 plugins, 18 script extender plugins, Vegas Shaders
+with its DXVK build, NV SMP, BOG, EVE Lite), all installed and launched from FOLM on Linux.
 
-Other Linux mod managers handle the common cases. We focus on **all** mods,
-including the old, odd and broken-installer ones that other tools skip.
+## Status: provided as-is
 
-## Editions
+FOLM is released as a finished community project. **The original author isn't maintaining it**: there's no
+support and no promise of fixes. It's open source (GPL-3.0) so anyone can fork it, fix it and carry it on.
+Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-| Edition | For | Notes |
-|---|---|---|
-| **Courier** | Fallout: New Vegas, with **optional** Tale of Two Wastelands (TTW) support | xNVSE, 4GB Patcher, GECK + GECK Extender |
-| **Wanderer** | Fallout 3 GOTY on its own | FOSE, FO3 memory patch, FO3 GECK, Windows Live leftovers |
+| | |
+|---|---|
+| ✅ Tested | Linux Mint 22 (Cinnamon, X11), Steam + Proton 10 / GE-Proton, New Vegas + TTW 3.4, AMD GPU (RADV) |
+| ❓ Not tested | Wayland, other distros (should work), NVIDIA, Steam Deck, Flatpak Steam |
+| ⚠️ Barely tested | **Wanderer edition (Fallout 3 on its own)**: it shares the engine, but hasn't had a full playthrough |
+| ❌ Not supported yet | BAIN installers, mods that come as Windows `.exe` installers, Nexus Collections, update checks, the FO3 → NV converter (only its check report works) |
 
-### TTW is optional
+## What it does
 
-FOLM is a mod manager for New Vegas and Fallout 3 first. **TTW support is an
-extra for players who choose to use TTW**: it helps install TTW on Linux and
-loads it like any other mod. Nothing in FOLM requires TTW. Plain New Vegas and
-plain Fallout 3 are fully supported on their own.
+- **Installs mods of every common kind:** plain archives (.7z/.zip/.rar), **FOMOD** wizards (its own
+  native installer, with descriptions and images), **old FOMM script installers** (C# installers like BOG
+  and Project Nevada, which most Linux setups can't run; FOLM runs them in a sandbox), mods inside archives
+  inside archives, and script extender plugins that go next to the game's exe.
+- **Nexus "Mod Manager Download" button:** click it on Nexus and FOLM downloads and installs the mod
+  (works with free accounts; you use your own API key).
+- **Deploys without a virtual file system:** mods are hard-linked into the game folder (no extra disk space,
+  instant), case problems (`Textures` vs `textures`) are merged away, and **Undeploy** puts the game folder
+  back exactly as it was.
+- **Load order:** plugins are always sorted after their masters, with **LOOT's** community rules built in.
+  LOOT warnings you've already dealt with can be **marked as handled**.
+- **Profiles:** separate mod setups sharing one library, each with **its own saves**.
+- **Checks before ▶ Play:** mods deployed, 4GB patch still applied, xNVSE present, missing masters,
+  LOOT errors, saves that need mods you turned off.
+- **🩺 Health check and requirement scan:** confirms mods actually loaded (from xNVSE's log), and finds
+  hidden requirements by reading each plugin's own startup checks plus the mod's Nexus requirement list.
+- **Proton fixes, automatic:** Wine DLL overrides for "proxy DLL" mods (NVHR and friends), DXVK builds,
+  an FPS cap in `dxvk.conf`, borderless window, read-only INIs kept read-only, archive invalidation.
+- **Crash reports:** when the game crashes, FOLM gathers the logs, mod list and system info into one
+  report with a plain-language diagnosis. Local only, personal paths removed.
+- **TTW support (optional):** recognises TTW and its archive, sorts it in TTW's official order, and can build a
+  Readius patch for TTW 3 from your own copy of Readius. TTW itself is installed with the TTW team's own
+  installer from their official page; FOLM never bundles it.
+- **GECK under Proton** for mod makers: opens with your mods loaded and turns what you save into a mod.
 
-TTW itself is the TTW team's work and is downloaded by the player from TTW's
-official page. FOLM never bundles or re-hosts it.
+## Install
 
-### FOLM's own Fallout 3 → New Vegas mod converter
+You need Steam with the game installed (run it once to the main menu first), Python 3.10+ and a few
+system tools.
 
-FOLM includes **its own converter** for bringing Fallout 3 mods to the New Vegas
-engine, written from scratch for Linux. It does **not** use TTW's conversion
-package, xEdit scripts or databases; everything it needs is built from the
-player's own game files. Two targets:
+1. **Download FOLM** and unpack it anywhere, for example `~/Apps/FOLM`.
+2. **Install the system tools.** On Debian / Ubuntu / Mint:
+   ```bash
+   sudo apt install p7zip-full unrar mono-complete bubblewrap xdotool x11-utils wmctrl python3-venv
+   ```
+   Fedora: `sudo dnf install p7zip p7zip-plugins unrar mono-complete bubblewrap xdotool xprop wmctrl` ·
+   Arch: `sudo pacman -S 7zip unrar mono bubblewrap xdotool xorg-xprop wmctrl`.
+   Only 7-Zip is strictly needed; the rest switch on features (RAR files, old FOMM installers, borderless window).
+3. **Run setup** (makes FOLM's own Python environment and checks the tools):
+   ```bash
+   ./setup.sh
+   ```
+4. **Start FOLM:**
+   ```bash
+   ./run-folm.sh
+   ```
+   On first start FOLM finds the game in your Steam libraries (or you pick the folder).
+5. *Optional:* `./make-shortcut.sh` adds FOLM to your app menu; `./make-shortcut.sh --nexus` makes Nexus's
+   "Mod Manager Download" buttons open FOLM.
 
-- **→ TTW:** for players using TTW, so FO3 mods work in the Capital Wasteland inside New Vegas.
-- **→ plain New Vegas:** brings Fallout 3 item mods into the Mojave without TTW. See the scope below.
+`python3 folm.py doctor` re-checks the system tools at any time. FOLM keeps its data (profiles, staged mods,
+backups) in `~/Games/FOLM` (set `FOLM_HOME` to use another folder). It changes nothing else on your PC
+except the game folder while mods are deployed, and the game's INI files (backed up, restored on undeploy).
 
-> ### ⚠️ <ins>What the plain New Vegas converter covers</ins>
->
-> **✅ Covered — Fallout 3 mods that add:**
-> - **Gear**
-> - **Weapons**
-> - **Items**
-> - **Clothes**
-> - **Armor**
-> - **Perks**
->
-> **❌ <ins>NOT covered</ins> — Fallout 3 mods that add or change:**
-> - **Quests**
-> - **Player homes**
-> - **Companions**
-> - **Enemies / creatures / NPCs**
-> - **New locations, cells or worldspaces**
->
-> ***These depend on Fallout 3's world, so they can't be moved into the Mojave.*** To use
-> them, play **TTW** and use the **→ TTW** target instead. If you try to convert one of
-> these for plain New Vegas, FOLM's report will tell you up front.
+## First steps
 
-It automates the mechanical parts, then gives a clear checklist for what needs a human in GECK.
-Converting someone's mod, and especially sharing the result, needs the original author's
-permission. Details: [docs/fo3-converter.md](docs/fo3-converter.md).
+1. **Add mods:** drag a downloaded mod file onto the window, use **Install mod…**, or add your mods folder in the
+   **Library** tab and double-click. Or use Nexus's Mod Manager Download button.
+2. **Tick** the mods you want and press **▶ Play**. FOLM deploys, sorts, checks and starts the game.
+3. Something wrong? Run **🩺 Health check**. After a crash, FOLM offers a crash report.
 
-Both editions share one engine (`folm_core`). Each edition is a thin game layer
-(`games/<edition>/game.json` plus game-specific setup), so a fix in the core
-helps both, and adding another game later is just a new layer.
-
-```
-folm_core/          shared engine: detect, install, case-fix, deploy, load order
-games/courier/      New Vegas / TTW layer
-games/wanderer/     Fallout 3 layer
-mods/               mods we make (restore, flesh out, update, patch, add)
-NOTES.md            running setup log
-backups/            anything we move out of a game folder (never deleted)
-```
-
-## What "Windows experience" means here
-
-- Pick a mod file, and it installs. No manual folder surgery, no Wine knowledge needed.
-- Your mods can live anywhere: file picker / drag and drop, any number of **library folders** (scanned with subfolders, other drives too), and a download folder you choose.
-- Old FOMM-era script installers and `.exe` installers work too.
-- Case-sensitivity problems (`Textures/` vs `textures/`) never happen.
-- Script extender, memory patch, GECK and xEdit just work under Proton.
-- Every mod is uninstallable and every change is reversible.
-- Anything that fails goes on a public compatibility list and gets fixed.
+Start with the essentials in [docs/recommended-mods.md](docs/recommended-mods.md) (xNVSE, 4GB patch,
+JIP LN, NVTF and friends).
 
 ## How it works
 
 ```
-pick mod file → DETECT type → INSTALL to its own staging folder (case-fixed)
-             → DEPLOY (link into Data, reversible) → LOAD ORDER → LAUNCH via script extender
+mod file → DETECT its type → INSTALL into its own staging folder (case-fixed)
+         → DEPLOY (hard links into the game folder, reversible) → LOAD ORDER → LAUNCH through Steam
 ```
 
 | Mod type | How it's handled |
 |---|---|
 | Plain Data folder / loose files | Straight install |
-| FOMOD with XML installer | Our own native installer |
-| BAIN (numbered option folders) | Option picker |
-| Root-level files (script extender plugins, DLLs) | Placed next to the game .exe |
-| FOMOD/FOMM with C# script | Legacy script engine (reimplemented FOMM functions) |
-| `.exe` installer | Run in a separate Wine sandbox against a decoy game folder; record what it changed and turn that into a normal mod |
+| FOMOD with XML installer | FOLM's own native installer (wizard in the app, prompts or `--auto` on the CLI) |
+| FOMOD/FOMM with C# script | Compiled with Mono against FOLM's FOMM shim, run sandboxed with bubblewrap; the mod's own window appears ([details](docs/legacy-installers.md)) |
+| Root-level files (script extender, DLLs, DXVK builds) | Placed next to the game's exe |
+| Archive inside an archive | Unpacked and installed |
+| BAIN, `.exe` installers | Not yet: FOLM says so instead of guessing |
 
 ## Making mods
 
@@ -251,49 +256,41 @@ Problems other mod managers have, and how FOLM handles each: [docs/known-issues.
 
 Every mod tested with FOLM, and what happened: [docs/compatibility.md](docs/compatibility.md).
 
-## Our mods
+## Project layout
 
-Besides the managers, we make mods that **restore, flesh out, update, patch
-and add** to the games. They're all original work, and they double as test
-cases for the managers. See [mods/README.md](mods/README.md).
-
-## Roadmap
-
-| # | Piece | Status |
-|---|---|---|
-| 0 | `nvcase`: case-collision checker and fixer | ✅ working |
-| 1 | `detect`: identify what kind of mod a file is (exe / TTW installer / FOMOD XML / FOMOD C# / BAIN / Data / game-root), warn on case collisions | ✅ working |
-| 2 | `folm.py` v0.1: staging, hard-link deployment with case fixing, conflict order, game-file backups, load order via plugin timestamps + plugins.txt, exact undo. Tested on a fake game folder | ✅ working — next: real TTW + YUPTTW |
-| 2b | Organizer: **sections + Sort mods** (Base game & TTW → Utilities & engine → Bug fixes → UI & menus → Content → Gameplay → Visuals → Our mods; never changes who wins a file conflict; patches stay with what they patch), **profiles** (separate setups sharing one mod library, each with its own Overwrite), **conflict viewer**, **overwrite catcher** (new/changed files in the game folder → Overwrite mod), notes and tags ✅. Still to do: separators/categories, search/filter, update checks | ✅ core done |
-| 2d | **LOOT** (`folm_core/loot.py`): native reader for LOOT's public-domain masterlist — groups, load-after/requirement rules, conditional messages, missing requirements, incompatibilities, dirty plugins; plugin sorting uses it; messages in the CLI (`folm.py loot`) and the app's Plugins tab. Falls back to master-only sorting offline | ✅ |
-| 2c | **FO3 → TTW converter**, Linux-native (see [docs/fo3-converter.md](docs/fo3-converter.md)): plugin reader/writer ✅, `convert-check` report ✅; masters + FormID renumbering, FOLM's own remap table (built from the player's FO3 + TTW files, no TTW tools), guided GECK pass | in progress |
-| 3 | **XML FOMOD installer** (`folm_core/fomod.py`): steps, conditional steps, all group types, setup-dependent option types, flags, conditional files, priorities, any text encoding; choices saved per mod and replayable. App wizard with descriptions + preview images; terminal prompts or `--auto` on the CLI ✅. `.exe` sandbox installer: proven by hand with TTW, still to automate | ✅ FOMOD done |
-| 4 | Script extender / memory patch / GECK / xEdit setup under Proton (per edition) | planned |
-| 4b | One-click dependencies: "Download & Install" from the official source, verify, install, confirm it works, removable. Nexus "Mod Manager Download" (nxm://) handler; optional Premium API with the player's own account. "Open official page" as a fallback | planned |
-| 4c | ✅ **Crash reports** (`folm_core/crash.py`): when a game launched with ▶ Play exits unexpectedly (or the Crash Logger wrote something), FOLM builds one report: crash logger + xNVSE + game error logs, mod list, load order, LOOT warnings, profile, Proton/RAM/swap/GPU; plain-language diagnosis where possible (missing master, failed NVSE plugin, out of memory, known LOOT issue); one-click save to share. FOLM's own errors are reported the same way. Local only, never uploaded; usernames and home paths redacted. `folm.py play` / `folm.py crash-report` | ✅ first version |
-| 5 | **The app** (`folm_gui.py`, Qt 6): edition + profile switcher, Deploy / Undeploy / Play, mod list with checkboxes, drag-to-reorder and conflict marks, tabs for Plugins (load order + masters + problems), Conflicts, Overwrite, Library (scan folders, double-click to install), Notes/tags, Log; drag a mod file onto the window to install. Same engine as the command line (`folm_core/manager.py`) | ✅ first version |
-| 6 | **Legacy FOMM C# installers** (`folm_core/legacy.py` + `fomm_shim/FommShim.cs`): compiled with Mono against FOLM's own FOMM shim, run in a bubblewrap sandbox, the mod's own installer window shown natively. First success: Project Nevada 2.5. See [docs/legacy-installers.md](docs/legacy-installers.md) | ✅ first version |
-
-Our own playthrough (TTW + our wasteland-select menu, fixes and QoL) doubles
-as the test lab: every problem we hit becomes a fix in the tool.
-
-## The app
-
-```bash
-./run-folm.sh          # first run: creates nothing outside ~/Games/FOLM and the project folder
-./make-shortcut.sh     # add FOLM to your app menu (add --desktop for a desktop icon too)
+```
+folm.py             command line
+folm_gui.py         the app (Qt 6)
+folm_core/          shared engine: detect, install, FOMOD, legacy installers, deploy, load order, LOOT,
+                    health, requirements, Nexus, crash reports, plugin + compiled-script reader/writer
+games/courier/      New Vegas / TTW edition settings
+games/wanderer/     Fallout 3 edition settings
+tools/              one-off builders (Readius TTW patch)
+tests/              core tests: .venv/bin/python -m unittest discover tests
+docs/               compatibility notes, known issues, recommended mods, development log
+mods/               a home for original mods made for FOLM (none released)
 ```
 
-The FOLM logo and icons in `assets/` are the project's own artwork. FOLM doesn't ship any Bethesda icons or artwork.
+Both editions share one engine; each edition is a thin game layer, so a fix in the core helps both.
+How FOLM came together, and everything learned about modding these games on Linux:
+[docs/development-log.md](docs/development-log.md).
 
-First-time setup inside the project: `uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt`
+## License
+
+FOLM's code is licensed under the **GNU General Public License v3.0** ([LICENSE](LICENSE)): use it, change it,
+share it; shared changes stay open source under the same license.
+
+The FOLM logo and icons in `assets/` are the original author's own artwork and are **not** under the GPL; see
+[assets/README.md](assets/README.md). Forks may keep them to refer to FOLM, but please use your own artwork if
+you release under a different name.
 
 ## folm.py (command line)
 
 ```bash
+python3 folm.py doctor                        # which system tools are missing, and how to install them
 python3 folm.py init                          # finds New Vegas and its Proton prefix
 python3 folm.py add "Tale of Two Wastelands"  # register a mod already in the mods folder
-python3 folm.py install SomeMod.7z            # stage a mod from an archive (Data / game-root types for now)
+python3 folm.py install SomeMod.7z            # install a mod from an archive (FOMOD: add --auto for defaults)
 python3 folm.py list                          # mods in order; later mods win file conflicts
 python3 folm.py move "Some Mod" --after "Other Mod"
 python3 folm.py disable "Some Mod"
