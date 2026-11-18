@@ -242,6 +242,23 @@ def _is_dxvk(path):
     return b"dxvk" in data.lower() or b"DXVK_" in data
 
 
+# Script extender plugins that refuse to run without another plugin (found in the DLLs' own startup checks).
+# {plugin dll: [(required dll, mod name, where to get it)]}
+PLUGIN_NEEDS = {
+    "vegasshaders.dll": [("lodflickerfix.dll", "LOD Flicker Fix - NVSE", "https://www.nexusmods.com/newvegas/mods/91705")],
+}
+
+
+def missing_plugin_needs(m):
+    """[(plugin, required dll, mod name, url)] for extender plugins whose required plugin isn't installed."""
+    pdir = dep.exists_ci(m.data_dir, f"{EXTENDER[m.edition][0]}/Plugins")
+    if not pdir:
+        return []
+    have = {f.lower() for f in os.listdir(pdir)}
+    return [(dll, need, name, url) for dll, needs in PLUGIN_NEEDS.items() if dll in have
+            for need, name, url in needs if need not in have]
+
+
 def _graphics(m, manifest):
     ours = {os.path.basename(r["target"]).lower(): r["mod"] for r in manifest.get("files", [])
             if os.path.dirname(r["target"]) == m.data["game_dir"]}
@@ -278,6 +295,10 @@ def _graphics(m, manifest):
             out.append(_f("error", "Graphics (Proton)", "Two renderers are installed: VegasShaders.dll and "
                           "NewVegasReloaded.dll. Only one may load (doubled effects, flicker, crashes).",
                           "Turn off New Vegas Reloaded; keep Vegas Shaders."))
+        for dll, need, name, url in missing_plugin_needs(m):
+            out.append(_f("error", "Graphics (Proton)", f"{dll} needs {name} ({need}), which isn't installed. "
+                          "The game shows an error at start and the plugin won't run.",
+                          f"Install {name}: {url} (Mod Manager Download), then Deploy."))
         if dep.exists_ci(pdir, "VSDxvk"):
             out.append(_f("warn", "Graphics (Proton)", "An old Vegas Shaders DXVK copy is in Data/NVSE/Plugins/VSDxvk "
                           "(can make the launcher open again and again).",

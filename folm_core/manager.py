@@ -855,6 +855,10 @@ class Manager:
         if subprocess.run(["pgrep", "-x", "steam"], capture_output=True).returncode != 0:
             out.append(("warn", "Steam isn't running. FOLM will try to start it, but the game may show "
                                 "'Application load error 65434' if Steam isn't ready."))
+        from . import health
+        for dll, need, name, url in health.missing_plugin_needs(self):
+            out.append(("error", f"{dll} needs {name} ({need}), which isn't installed; the game will show an error. "
+                                 f"Get it from {url} (Mod Manager Download), then Deploy."))
         if self._exe_is_4gb() is False and dep.exists_ci(self.data_dir, "NVSE/Plugins") is not None:
             out.append(("error", f"{game_info(self.edition)['exe']} isn't 4GB-patched any more (verifying files in "
                                  "Steam undoes it). Re-run the 4GB patcher, or xNVSE and its plugins won't load."))
