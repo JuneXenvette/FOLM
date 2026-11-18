@@ -12,6 +12,7 @@ and classifies it, so FOLM knows which installer to use:
   data            files that go in the game's Data folder
   game-root       files that go next to the game .exe (script extender, DLLs)
   data+game-root  both of the above
+  source          a mod's source code (for programmers; nothing to install)
   unknown         nothing recognisable as a Fallout mod
 """
 
@@ -33,7 +34,9 @@ PLUGIN_EXTS = (".esm", ".esp")
 DATA_FILE_EXTS = PLUGIN_EXTS + (".bsa", ".override", ".ini", ".nam")
 # Files that only make sense next to FalloutNV.exe / Fallout3.exe.
 ROOT_FILE_RE = re.compile(r"^(nvse_|fose_|d3d9\.dll$|dinput8\.dll$|dxgi\.dll$|enb|.*_loader\.(exe|dll)$)", re.I)
-DOC_EXTS = (".txt", ".md", ".pdf", ".html", ".htm", ".rtf", ".url", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".docx")
+DOC_EXTS = (".txt", ".md", ".pdf", ".html", ".htm", ".rtf", ".url", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".docx",
+            ".json")       # e.g. vortex_override_instructions.json: notes for another manager, not game files
+SOURCE_EXTS = (".c", ".cpp", ".cc", ".h", ".hpp", ".sln", ".vcproj", ".vcxproj", ".def", ".cs", ".csproj", ".cmake")
 BAIN_DIR_RE = re.compile(r"^\d{2,3}\s")
 
 
@@ -133,6 +136,14 @@ def classify(files, dirs, source_name=""):
         r["notes"] = "Tale of Two Wastelands installer: run the .exe in the Wine sandbox with game paths in the registry"
         return r
 
+    # Source code only (e.g. "Enhanced Camera Source"): nothing for the game
+    code = [f for f in low_files if f.endswith(SOURCE_EXTS)]
+    if code and len(code) >= len([f for f in low_files if not f.endswith(DOC_EXTS)]) * 0.6 \
+            and not any(f.endswith((".dll", ".esp", ".esm", ".bsa")) for f in low_files):
+        r["type"] = "source"
+        r["notes"] = "source code for programmers, not something to install (get the mod's main file instead)"
+        return r
+
     prefix = unwrap(files, dirs)
     pre = (prefix + "/") if prefix else ""
     kids = children(files, dirs, prefix)
@@ -170,7 +181,8 @@ def classify(files, dirs, source_name=""):
             r["game_root_files"] = sorted(root_level)
         elif any(k in DATA_DIRS for k in kids) or any(k.endswith(DATA_FILE_EXTS) for k in kids):
             data_root = prefix
-        roots = sorted(v for k, v in kids.items() if ROOT_FILE_RE.match(k) and not is_dir(dirs, prefix, v))
+        roots = sorted(v for k, v in kids.items() if ROOT_FILE_RE.match(k) and not is_dir(dirs, prefix, v)
+                       and not k.endswith(DOC_EXTS))
         if data_root is None and roots:
             r["type"] = "game-root"
             r["game_root_files"] = sorted(v for k, v in kids.items() if not k.endswith(DOC_EXTS))

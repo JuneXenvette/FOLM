@@ -181,6 +181,13 @@ before it starts. On the command line, `folm.py play` deploys first (`--no-deplo
   Steam undoes it), xNVSE present when NVSE plugins are, missing masters, LOOT errors, saves that need
   plugins that are now off, and V-Sync off with no FPS cap. Problems show in one box: Play anyway or Cancel.
 
+- **Mods with "proxy" DLLs** (e.g. NVHR's `d3dx9_38.dll`, or hooks shipped as `dinput8.dll`/`dsound.dll`):
+  Windows loads the copy in the game folder, but Wine uses its own built-in copy, so under Proton such mods
+  silently do nothing. FOLM sets a per-game Wine override for exactly those DLLs while they're deployed
+  (no Steam launch options needed). The health check flags any that Wine is still ignoring.
+- **Read-only INIs** (a common way to stop the launcher rewriting `Fallout.ini`) stay read-only: FOLM
+  unlocks the file for its one edit and locks it again.
+
 All of these are in the app's **⚙ Settings** menu; every change is undone exactly on undeploy.
 
 ## Load order & LOOT

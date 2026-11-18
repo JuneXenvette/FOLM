@@ -224,6 +224,9 @@ class Manager:
                 inner = os.path.join(tmp, r["inner"])
                 log(f"  {os.path.basename(archive)} wraps {os.path.basename(inner)}: installing that")
                 return self.install(inner, name, chooser=chooser, log=log)
+        if r["type"] == "source":
+            raise FolmError(f"{os.path.basename(archive)} is the mod's source code (for programmers), not something "
+                            "to install. Download the mod's main file instead.")
         if r["type"] not in ("data", "data+game-root", "game-root"):
             raise FolmError(f"FOLM can't install '{r['type']}' mods yet.")
         dest = os.path.join(self.mods_dir, name)
@@ -689,6 +692,12 @@ class Manager:
                     shutil.move(f["backup"], f["path"])
                 elif os.path.exists(f["path"]):
                     os.remove(f["path"])
+            if st.get("dll_overrides"):
+                from . import wineprefix
+                if wineprefix.prefix_busy(self.data["prefix"]):
+                    raise FolmError("The game (or another Wine program) is still running in this game's prefix. "
+                                    "Close it, then try again.")
+                wineprefix.set_overrides(self.data["prefix"], st["dll_overrides"])
             os.remove(self.ini_state)
         if not apply:
             return
@@ -697,6 +706,10 @@ class Manager:
         custom = os.path.join(self.ini_dir(), "FalloutCustom.ini")
         game_ini = os.path.join(self.ini_dir(), "Fallout.ini")
 
+        def save_state():                    # after every change, so a failure part-way can still be undone
+            with open(self.ini_state, "w") as fh:
+                json.dump(st, fh, indent=1)
+
         def edit(path, section, keys):
             if path == game_ini and os.path.exists(path):
                 bak = os.path.join(self.dir, "backups", "Fallout.ini.folm-backup")
@@ -704,6 +717,7 @@ class Manager:
                     os.makedirs(os.path.dirname(bak), exist_ok=True)
                     shutil.copy2(path, bak)
             st["ini"].append({"path": path, "section": section, "previous": ini.set_keys(path, section, keys)})
+            save_state()
 
         if self.setting("archive_invalidation"):
             edit(custom if jip else game_ini, "Archive", self.ARCHIVE_KEYS)
@@ -713,6 +727,22 @@ class Manager:
             os.makedirs(self.save_dir(), exist_ok=True)
             edit(game_ini, "General", {"SLocalSavePath": f"Saves\\{sub}\\"})
             done.append(f"saves in Saves/{sub}")
+        # Mods that ship a proxy DLL next to the exe (e.g. NVHR's d3dx9_38.dll): make Wine load it
+        from . import wineprefix
+        mf = json.load(open(self.manifest)) if os.path.exists(self.manifest) else {"files": []}
+        proxies = {}
+        for dll, mod in wineprefix.needed(self.data["game_dir"], mf):
+            proxies.setdefault(dll, mod)
+        if proxies and os.path.exists(wineprefix.user_reg(self.data["prefix"])):
+            if wineprefix.prefix_busy(self.data["prefix"]):
+                log("Wine DLL overrides skipped: the game's prefix is in use. Deploy again after closing the game.")
+            else:
+                todo = {d: wineprefix.NATIVE_FIRST for d in proxies
+                        if (wineprefix.get(self.data["prefix"], d) or "").replace(" ", "") != wineprefix.NATIVE_FIRST}
+                if todo:
+                    st["dll_overrides"] = wineprefix.set_overrides(self.data["prefix"], todo)
+                    save_state()
+                done.append("Wine loads " + ", ".join(f"{d}.dll ({proxies[d]})" for d in sorted(proxies)))
         cap = int(self.setting("fps_cap") or 0)
         if cap > 0:
             conf = os.path.join(self.data["game_dir"], "dxvk.conf")
@@ -731,6 +761,7 @@ class Manager:
             with open(conf, "w") as fh:
                 fh.write("\n".join(lines) + "\n")
             st["files"].append({"path": conf, "backup": bak})
+            save_state()
             done.append(f"FPS cap {cap}")
         with open(self.ini_state, "w") as fh:
             json.dump(st, fh, indent=1)

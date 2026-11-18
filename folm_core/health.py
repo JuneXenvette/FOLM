@@ -261,6 +261,16 @@ def _graphics(m, manifest):
             out.append(_f("warn", "Graphics (Proton)", f"{f} in the game folder ({src}) replaces DXVK, the Direct3D "
                           "layer Proton uses. ENB/ReShade builds made for Windows often crash or run slowly this way.",
                           "Turn off the mod it came from, or use a Linux-friendly alternative (e.g. vkBasalt)."))
+    from . import wineprefix
+    if os.path.exists(wineprefix.user_reg(m.data["prefix"])):
+        for dll, mod in wineprefix.needed(m.data["game_dir"], manifest):
+            v = (wineprefix.get(m.data["prefix"], dll) or "").replace(" ", "")
+            if v.startswith("native"):
+                out.append(_f("ok", "Graphics (Proton)", f"{dll}.dll ({mod}) is loaded by Wine instead of its own copy."))
+            else:
+                out.append(_f("warn", "Graphics (Proton)", f"{dll}.dll ({mod}) is in the game folder, but Wine is set to "
+                              "use its own built-in copy, so the mod does nothing.", "Close the game and Deploy again; "
+                              "FOLM sets the override."))
     pdir = dep.exists_ci(m.data_dir, f"{EXTENDER[m.edition][0]}/Plugins")
     if pdir:
         have = {f.lower() for f in os.listdir(pdir)}
@@ -299,6 +309,30 @@ def _case_twins(m, depth=3):
     return [_f("ok", "Folders", "No case-duplicate folders.")]
 
 
+PATCHY = re.compile(r"\b(patch|patches|fix|fixed|fixes|replacer|addon|add-on|update|hotfix|compatibility)\b", re.I)
+
+
+def _words(name):
+    return {w for w in re.findall(r"[a-z]{4,}", name.lower())} - {"patch", "fixed", "replacer", "update", "addon",
+                                                                     "version", "plus", "main", "file", "files"}
+
+
+def _reversed_patches(m):
+    """A patch/replacer that loses its files to the mod it seems to patch (usually installed in the wrong order)."""
+    pairs = {}
+    for path, provs in m.conflicts().items():
+        for loser, winner in ((a, b) for i, a in enumerate(provs) for b in provs[i + 1:]):
+            pairs.setdefault((loser, winner), 0)
+            pairs[(loser, winner)] += 1
+    out = []
+    for (loser, winner), n in pairs.items():
+        if PATCHY.search(loser) and not PATCHY.search(winner) and _words(loser) & _words(winner):
+            out.append(_f("warn", "Deployed files", f"'{loser}' looks like a patch or replacer for '{winner}', but "
+                          f"'{winner}' wins their {n} shared file(s), so the patch has no effect.",
+                          f"Move '{loser}' below '{winner}' (drag it in the mod list), then Deploy."))
+    return out
+
+
 def check(m):
     m.need()
     import json
@@ -309,6 +343,7 @@ def check(m):
                       "Deploy, then run the health check again."))
     else:
         out += _deployed_files(m, manifest)
+        out += _reversed_patches(m)
     out += _plugins(m)
     ext, dlls = _extender_plugins(m)
     out += ext

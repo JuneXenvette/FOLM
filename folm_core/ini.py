@@ -17,9 +17,20 @@ def _read(path):
 
 
 def _write(path, lines):
+    """Write the file; a read-only INI (a common way to stop the game's launcher rewriting it) is
+    unlocked for the edit and locked again afterwards, so the player's protection stays."""
+    import stat
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\r\n") as fh:   # the game's INIs use Windows line endings
-        fh.write("\n".join(lines).rstrip("\n") + "\n")
+    mode = os.stat(path).st_mode if os.path.exists(path) else None
+    locked = mode is not None and not (mode & stat.S_IWUSR)
+    if locked:
+        os.chmod(path, mode | stat.S_IWUSR)
+    try:
+        with open(path, "w", encoding="utf-8", newline="\r\n") as fh:   # the game's INIs use Windows line endings
+            fh.write("\n".join(lines).rstrip("\n") + "\n")
+    finally:
+        if locked:
+            os.chmod(path, mode)
 
 
 def _section_bounds(lines, section):

@@ -196,8 +196,15 @@ def _pe_version(path, product=False):
 
 
 def _plugin_version(info):
-    m = re.search(r"version:?\s*([0-9][0-9.]*)", (info or {}).get("description", ""), re.I)
-    return tuple(int(x) for x in m.group(1).strip(".").split(".")) if m else None
+    """Version from a plugin's description: "Version: 1.2", "v1.2", or a description that is only "3.4" (TTW)."""
+    desc = (info or {}).get("description", "") or ""
+    m = re.search(r"version:?\s*v?([0-9][0-9.]*)", desc, re.I) \
+        or re.match(r"\s*v?([0-9]+(?:\.[0-9]+)+)\s*$", desc, re.I) \
+        or re.match(r"\s*v([0-9]+(?:\.[0-9]+)*)\b", desc, re.I)
+    if not m:
+        return None
+    nums = [x for x in m.group(1).strip(".").split(".") if x.isdigit()]
+    return tuple(int(x) for x in nums) if nums else None
 
 
 def _vtuple(s):
