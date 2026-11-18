@@ -214,6 +214,18 @@ FOLM keeps two separate orders:
 | ℹ (blue) | A note: version checks ("Your New Vegas Script Extender is up-to-date"), links to a mod's docs. Nothing to fix |
 | ⚠ (orange) | A warning: e.g. a plugin needs cleaning, or an outdated file |
 | ✖ (red) | An error: e.g. a required mod is missing or two mods are incompatible. Fix before playing |
+| ✔ (grey) | **Marked as handled**: you told FOLM a patch fixes it, or you checked it yourself |
+
+**Mark as handled.** LOOT doesn't know every community patch. EVE 1.19, for example, is flagged as
+incompatible with TTW 3.2+, but *EVE Lite TTW* fixes it. Right-click the message in the Plugins tab and pick
+**Mark as handled…**, then choose the patch (FOLM guesses it) or "I checked it myself", and add a note if you like.
+It stops counting as an error before Play. If you named a patch and later turn it off or remove it,
+the error comes back with a note saying so. Right-click again and pick **Show as a problem again** to undo.
+Each profile keeps its own list. CLI: `folm.py handled list|add|remove`.
+
+Before marking, make sure the patch fits the TTW version you're using. For example, *Readius TTW Fix* (2015, for TTW 2.x)
+rewrites TTW's Vault 101 quests and scripts (MQ04, CG02–CG04) with their old versions, and TTW 3.4 has since changed
+all four. It would roll back TTW's fixes, so leave it off.
 
 ## Compatibility
 
@@ -283,6 +295,7 @@ python3 folm.py set fps-cap 120                # or off; written to dxvk.conf on
 python3 folm.py set profile-saves on          # each profile keeps its own saves
 python3 folm.py preflight                     # the pre-Play checks (play runs them too; --force to skip)
 python3 folm.py health                        # are mods really working? (files, plugins, what loaded)
+python3 folm.py handled add PLUGIN TEXT --by MOD --note ...   # mark a LOOT message as handled (list / remove)
 python3 folm.py nexus-login                   # connect your Nexus account (personal API key)
 python3 folm.py nxm "nxm://newvegas/mods/…"   # download + install a Mod Manager Download link
 ./backup.sh                                   # back up the project, FOLM data, saves and INIs

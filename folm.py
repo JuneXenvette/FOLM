@@ -247,8 +247,8 @@ def cmd_catch(a, m):
 
 
 def print_loot(msgs):
-    icon = {"error": "✖ ERROR", "warn": "⚠ WARN ", "say": "ℹ note "}
-    for sev in ("error", "warn", "say"):
+    icon = {"error": "✖ ERROR", "warn": "⚠ WARN ", "handled": "✔ done ", "say": "ℹ note "}
+    for sev in ("error", "warn", "handled", "say"):
         for s, plugin, text in msgs:
             if s == sev:
                 print(f"  {icon[s]}  {plugin + ': ' if plugin else ''}{text}")
@@ -272,9 +272,41 @@ def cmd_loot(a, m):
     msgs = lc[2] if lc else []
     print(f"LOOT checked {len(m.game_view()[1])} plugins: "
           f"{sum(1 for x in msgs if x[0] == 'error')} error(s), {sum(1 for x in msgs if x[0] == 'warn')} warning(s), "
-          f"{sum(1 for x in msgs if x[0] == 'say')} note(s).")
+          f"{sum(1 for x in msgs if x[0] == 'say')} note(s)"
+          + (f", {sum(1 for x in msgs if x[0] == 'handled')} marked as handled." if any(x[0] == 'handled' for x in msgs) else "."))
     print_loot(msgs)
     print("\nLoad-order data: LOOT masterlist (public domain, https://loot.github.io)")
+
+
+def cmd_handled(a, m):
+    m.need()
+    if a.action == "list":
+        if not m.handled():
+            print(f"Nothing marked as handled in profile {m.active!r}.")
+        enabled = set(m.enabled())
+        for h in m.handled():
+            state = "" if not h.get("by") or h["by"] in enabled else "  (that mod is off: warning is back)"
+            print(f"  {h.get('plugin') or '(general)'}: {h['text']}\n      by: {h.get('by') or 'checked by you'}"
+                  f"{' · ' + h['note'] if h.get('note') else ''}{state}")
+        return
+    if not a.plugin or not a.text:
+        raise FolmError("give the plugin and (part of) the LOOT message, e.g. "
+                        "handled add \"EVE FNV - ALL DLC.esp\" incompatible --by \"EVE TTW Patch\"")
+    lc = m.loot_check()
+    found = [(p, t.split("  [")[0]) for sev, p, t in (lc[2] if lc else [])
+             if (p or "").lower() == a.plugin.lower() and a.text.lower() in t.lower()]
+    if a.action == "remove":
+        found = found or [(a.plugin, h["text"]) for h in m.handled()
+                          if (h.get("plugin") or "").lower() == a.plugin.lower() and a.text.lower() in h["text"].lower()]
+        for p, t in found:
+            m.unmark_handled(p, t)
+            print(f"Showing as a problem again: {p}: {t}")
+        return
+    if not found:
+        raise FolmError("no current LOOT message matches that (see 'folm.py loot')")
+    for p, t in found:
+        m.mark_handled(p, t, a.by, a.note or "")
+        print(f"Marked as handled: {p}: {t}" + (f" (by {a.by})" if a.by else ""))
 
 
 def cmd_conflicts(a, m):
@@ -430,6 +462,10 @@ def main(argv=None):
     s = sub.add_parser("geck"); s.add_argument("--edit", metavar="MOD")
     s = sub.add_parser("keep"); s.add_argument("name")
     s = sub.add_parser("loot"); s.add_argument("--update", action="store_true")
+    s = sub.add_parser("handled", help="LOOT messages you've dealt with (e.g. with a patch)")
+    s.add_argument("action", choices=["list", "add", "remove"]); s.add_argument("plugin", nargs="?")
+    s.add_argument("text", nargs="?", help="part of the LOOT message"); s.add_argument("--by", help="the mod that handles it")
+    s.add_argument("--note")
     s = sub.add_parser("conflicts"); s.add_argument("name", nargs="?"); s.add_argument("--limit", type=int, default=5)
     s = sub.add_parser("convert-check"); s.add_argument("plugin"); s.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
@@ -439,7 +475,7 @@ def main(argv=None):
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "health": cmd_health, "nexus-login": cmd_nexus_login, "nexus-logout": cmd_nexus_logout, "nxm": cmd_nxm, "loot": cmd_loot, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "health": cmd_health, "nexus-login": cmd_nexus_login, "nexus-logout": cmd_nexus_logout, "nxm": cmd_nxm, "loot": cmd_loot, "handled": cmd_handled, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
     try:
         sys.exit(cmds[a.cmd](a, m) or 0)
     except FolmError as e:

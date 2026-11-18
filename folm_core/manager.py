@@ -549,7 +549,50 @@ class Manager:
             log(f"  ! LOOT unavailable ({e}); sorting by masters only")
             return None
         view, plugins = self.game_view()
-        return loot.evaluate(ml, list(plugins), view)
+        after, ranks, msgs = loot.evaluate(ml, list(plugins), view)
+        return after, ranks, self._apply_handled(msgs)
+
+    # ------------------------------------------------------------ "Marked as handled" LOOT messages
+    def handled(self):
+        return self.cur.setdefault("handled", [])
+
+    def _handled_entry(self, plugin, text):
+        key = ((plugin or "").lower(), text.strip())
+        return next((h for h in self.handled() if ((h.get("plugin") or "").lower(), h["text"].strip()) == key), None)
+
+    def _apply_handled(self, msgs):
+        """Handled messages become severity 'handled' while the mod that handles them is enabled."""
+        enabled = set(self.enabled())
+        out = []
+        for sev, plugin, text in msgs:
+            h = self._handled_entry(plugin, text) if sev in ("error", "warn") else None
+            if h and (not h.get("by") or h["by"] in enabled):
+                why = f"handled by {h['by']}" if h.get("by") else "marked as handled"
+                out.append(("handled", plugin, f"{text}  [{why}{': ' + h['note'] if h.get('note') else ''}]"))
+            elif h and h.get("by"):
+                out.append((sev, plugin, f"{text}  [was handled by {h['by']}, which is now off or removed]"))
+            else:
+                out.append((sev, plugin, text))
+        return out
+
+    def mark_handled(self, plugin, text, by=None, note=""):
+        """Remember that a LOOT error/warning is dealt with (e.g. by a community patch mod)."""
+        if by and by not in {x["name"] for x in self.mods()}:
+            raise FolmError(f"no mod called {by!r} in this profile")
+        text = re.sub(r"\s+\[(handled by|marked as handled|was handled by).*\]$", "", text).strip()
+        self.cur["handled"] = [h for h in self.handled()
+                               if ((h.get("plugin") or "").lower(), h["text"]) != ((plugin or "").lower(), text)]
+        self.cur["handled"].append({"plugin": plugin or "", "text": text, "by": by or None, "note": note.strip(),
+                                    "date": time.strftime("%Y-%m-%d")})
+        self.save()
+
+    def unmark_handled(self, plugin, text):
+        text = re.sub(r"\s+\[(handled by|marked as handled|was handled by).*\]$", "", text).strip()
+        before = len(self.handled())
+        self.cur["handled"] = [h for h in self.handled()
+                               if ((h.get("plugin") or "").lower(), h["text"]) != ((plugin or "").lower(), text)]
+        self.save()
+        return before != len(self.cur["handled"])
 
     # ------------------------------------------------------------ game
     def deploy(self, log=_quiet):

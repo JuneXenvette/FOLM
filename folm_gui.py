@@ -5,6 +5,7 @@ Run:  .venv/bin/python folm_gui.py            (FOLM_HOME env var picks another d
 """
 
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -343,6 +344,8 @@ class Main(QMainWindow):
         self.plugins.setHeaderLabels(["#", "Plugin (sorted with LOOT's rules)", "Masters"])
         self.plugins.setRootIsDecorated(False)
         self.plugins.itemChanged.connect(self.on_plugin_checked)
+        self.plugins.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.plugins.customContextMenuRequested.connect(self.plugin_menu)
         self.tabs.addTab(self.plugins, "Plugins")
         self.conflicts = QTreeWidget()
         self.conflicts.setHeaderLabels(["Winner  ⟵  losers", "Files"])
@@ -516,15 +519,26 @@ class Main(QMainWindow):
                 it.setForeground(1, QColor("#d9534f"))
                 self.plugins.addTopLevelItem(it)
             loot_msgs = getattr(m, "last_loot_messages", [])
-            colors = {"error": QColor("#d9534f"), "warn": QColor("#d08a2b"), "say": QColor("#8aa4c8")}
-            icons = {"error": "✖", "warn": "⚠", "say": "ℹ"}
-            for sev in ("error", "warn", "say"):
+            colors = {"error": QColor("#d9534f"), "warn": QColor("#d08a2b"), "say": QColor("#8aa4c8"),
+                      "handled": QColor("#7f8c7f")}
+            icons = {"error": "✖", "warn": "⚠", "say": "ℹ", "handled": "✔"}
+            for sev in ("error", "warn", "handled", "say"):
                 for s_, plugin, text in loot_msgs:
                     if s_ != sev:
                         continue
                     it = QTreeWidgetItem([icons[sev], f"LOOT: {plugin + ' — ' if plugin else ''}{text}", ""])
                     it.setForeground(1, colors[sev])
-                    it.setToolTip(1, text)
+                    it.setData(0, Qt.UserRole, (s_, plugin, text))
+                    tip = text
+                    if sev in ("error", "warn"):
+                        tip += "\n\nRight-click → Mark as handled, if a patch or your own check has dealt with it."
+                    elif sev == "handled":
+                        tip += "\n\nRight-click → Show as a problem again."
+                    it.setToolTip(1, tip)
+                    if sev == "handled":
+                        f = it.font(1)
+                        f.setItalic(True)
+                        it.setFont(1, f)
                     self.plugins.addTopLevelItem(it)
             self.loot_summary = (f" · LOOT: {sum(1 for x in loot_msgs if x[0] == 'error')} error(s), "
                                  f"{sum(1 for x in loot_msgs if x[0] == 'warn')} warning(s)") if loot_msgs else ""
@@ -686,7 +700,7 @@ class Main(QMainWindow):
         self.refresh()
 
     def on_plugin_checked(self, it, col):
-        if self.loading or col != 1:
+        if self.loading or col != 1 or it.data(0, Qt.UserRole) or not (it.flags() & Qt.ItemIsUserCheckable):
             return
         self.m.set_plugin_active(it.text(1), it.checkState(1) == Qt.Checked)
         self.say(f"{'Activated' if it.checkState(1) == Qt.Checked else 'Deactivated'} {it.text(1)} "
@@ -988,6 +1002,71 @@ class Main(QMainWindow):
                 self.say(f"Installed {res[0]} ({res[1]['type']}) from Nexus. Deploy to put it in the game.")
             self.run(self.m.install, path, name.strip(), self.bridge.chooser, then=installed)
         self.run(self.m.nexus_download, url, then=downloaded)
+
+    # ---------------------------------------------------------------- "Mark as handled" (LOOT messages)
+    def plugin_menu(self, pos):
+        it = self.plugins.itemAt(pos)
+        msg = it.data(0, Qt.UserRole) if it else None
+        if not msg:
+            return
+        sev, plugin, text = msg
+        menu = QMenu(self)
+        if sev in ("error", "warn"):
+            menu.addAction("Mark as handled…").triggered.connect(lambda: self.mark_handled(plugin, text))
+        elif sev == "handled":
+            menu.addAction("Show as a problem again").triggered.connect(lambda: self.unmark_handled(plugin, text))
+        else:
+            return
+        menu.exec(self.plugins.viewport().mapToGlobal(pos))
+
+    def mark_handled(self, plugin, text):
+        d = QDialog(self)
+        d.setWindowTitle("Mark as handled")
+        lay = QVBoxLayout(d)
+        lab = QLabel(f"<b>LOOT says:</b> {plugin + ' — ' if plugin else ''}{text}<br><br>"
+                     "If a patch fixes this (or you've checked it yourself), FOLM stops treating it as a problem. "
+                     "If you pick the patch here and it's ever turned off or removed, the warning comes back.")
+        lab.setWordWrap(True)
+        lay.addWidget(lab)
+        lay.addWidget(QLabel("What handles it?"))
+        by = QComboBox()
+        by.addItem("Nothing specific (I checked it myself)", None)
+        names = [x["name"] for x in self.m.mods() if x.get("enabled")]
+        filler = {"esp", "esm", "esl", "all", "dlc", "fnv", "the", "and", "mod", "version"}
+        words = set(re.findall(r"[a-z]{3,}", (plugin or "").lower())) - filler
+        guess = 0
+        for i, n in enumerate(names, 1):
+            by.addItem(n, n)
+            name_words = set(re.findall(r"[a-z0-9]+", n.lower()))
+            if name_words & {"patch", "fix", "compat", "compatible", "ttw", "lite"} and name_words & words:
+                guess = i
+        by.setCurrentIndex(guess)
+        lay.addWidget(by)
+        lay.addWidget(QLabel("Note (optional):"))
+        note = QLineEdit()
+        note.setPlaceholderText("e.g. EVE - TTW patch from the TTW Discord")
+        lay.addWidget(note)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("Mark as handled")
+        bb.accepted.connect(d.accept)
+        bb.rejected.connect(d.reject)
+        lay.addWidget(bb)
+        d.resize(560, 0)
+        if d.exec() != QDialog.Accepted:
+            return
+        try:
+            self.m.mark_handled(plugin, text, by.currentData(), note.text())
+        except FolmError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return
+        self.say(f"Marked as handled: {plugin} — {text.split('  [')[0]}"
+                 + (f" (by {by.currentData()})" if by.currentData() else ""))
+        self.refresh()
+
+    def unmark_handled(self, plugin, text):
+        self.m.unmark_handled(plugin, text)
+        self.say(f"Showing as a problem again: {plugin} — {text.split('  [')[0]}")
+        self.refresh()
 
     def health_check(self):
         from folm_core import health
