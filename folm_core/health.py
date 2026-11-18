@@ -245,7 +245,12 @@ def _is_dxvk(path):
 # Script extender plugins that refuse to run without another plugin (found in the DLLs' own startup checks).
 # {plugin dll: [(required dll, mod name, where to get it)]}
 PLUGIN_NEEDS = {
-    "vegasshaders.dll": [("lodflickerfix.dll", "LOD Flicker Fix - NVSE", "https://www.nexusmods.com/newvegas/mods/91705")],
+    "vegasshaders.dll": [("lodflickerfix.dll", "LOD Flicker Fix - NVSE", "https://www.nexusmods.com/newvegas/mods/91705"),
+                         ("vanillaplusterrain.dll", "Vanilla Plus Terrain", "https://www.nexusmods.com/newvegas/mods/92519")],
+    # both need Shader Loader to load their shaders
+    "lodflickerfix.dll": [("fallout shader loader.dll", "Shader Loader - NVSE", "https://www.nexusmods.com/newvegas/mods/87814")],
+    "vanillaplusterrain.dll": [("fallout shader loader.dll", "Shader Loader - NVSE",
+                                "https://www.nexusmods.com/newvegas/mods/87814")],
 }
 
 
