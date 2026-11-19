@@ -7,7 +7,9 @@
 #
 # Every download is pinned to one exact version and checked against its SHA-256, so a build
 # always contains the same pieces. To update one, change its line below (file, URL and checksum).
-set -euo pipefail
+set -Eeuo pipefail
+# On GitHub, show the failing line as a public note on the run (logs need a sign-in to read)
+[ -n "${GITHUB_ACTIONS:-}" ] && trap 'echo "::error file=packaging/build-appimage.sh,line=$LINENO::failed: $BASH_COMMAND"' ERR
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${1:-$(sed -n 's/^VERSION = "\(.*\)"/\1/p' "$ROOT/folm_core/version.py")}"
@@ -107,7 +109,13 @@ ln -s folm.png "$APPDIR/.DirIcon"
 say "Checking every library is there"
 missing="$(find "$APPDIR/usr" -name '*.so*' -type f -print0 | xargs -0 ldd 2>/dev/null | awk '/not found/ {print $1}' | sort -u)"
 if [ -n "$missing" ]; then
-  echo "libraries that are neither in the AppImage nor on this PC:" >&2; echo "$missing" >&2; exit 1
+  echo "libraries that are neither in the AppImage nor on this PC:" >&2; echo "$missing" >&2
+  for l in $missing; do
+    users="$(find "$APPDIR/usr" -name '*.so*' -type f -print0 | xargs -0 ldd 2>/dev/null |
+             awk -v l="$l" '/^\// {f=$1; sub(/:$/, "", f)} $1 == l && /not found/ {print f}' | sed "s|$APPDIR/||" | head -3 | tr '\n' ' ')"
+    [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::missing library $l (needed by $users)"
+  done
+  exit 1
 fi
 QT_QPA_PLATFORM=offscreen "$APPDIR/AppRun" --self-test
 

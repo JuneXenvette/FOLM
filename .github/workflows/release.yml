@@ -15,13 +15,20 @@ jobs:
   appimage:
     runs-on: ubuntu-22.04          # older libraries than 24.04 = the AppImage runs on more distros
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Libraries and tools the build needs
         run: |
           sudo apt-get update -q
+          # copied into the AppImage:
           sudo apt-get install -y -q libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
-            libxcb-render-util0 libxcb-util1 libxkbcommon-x11-0 libegl1 libgl1 libfontconfig1 libdbus-1-3
+            libxcb-render-util0 libxcb-util1 libxkbcommon-x11-0
+          # what any Linux desktop has (the build checks every bundled library finds these):
+          sudo apt-get install -y -q libegl1 libgl1 libopengl0 libglx0 libfontconfig1 libfreetype6 \
+            libdbus-1-3 libglib2.0-0 libxkbcommon0 libx11-xcb1 libxrender1 libxi6 libsm6 libice6 \
+            libxcb-randr0 libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xkb1 libxcb-shm0 libxcb-glx0 \
+            libxcb-xinerama0 libxcb-xinput0 libwayland-client0 libwayland-cursor0 libwayland-egl1 \
+            libwayland-server0 libgbm1 libdrm2 libgtk-3-0 libcups2 libssl3 libgssapi-krb5-2
 
       - name: Version
         id: v
@@ -45,7 +52,7 @@ jobs:
 
       - name: Keep the build (manual runs)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: FOLM-${{ steps.v.outputs.version }}-AppImage
           path: dist/*
