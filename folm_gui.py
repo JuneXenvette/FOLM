@@ -348,6 +348,7 @@ class Main(QMainWindow):
         self.plugins.itemChanged.connect(self.on_plugin_checked)
         self.plugins.setContextMenuPolicy(Qt.CustomContextMenu)
         self.plugins.customContextMenuRequested.connect(self.plugin_menu)
+        self.plugins.itemDoubleClicked.connect(self.plugin_double_clicked)
         self.tabs.addTab(self.plugins, "Plugins")
         self.conflicts = QTreeWidget()
         self.conflicts.setHeaderLabels(["Winner  ⟵  losers", "Files"])
@@ -586,6 +587,8 @@ class Main(QMainWindow):
                         tip += "\n\nRight-click → Mark as handled, if a patch or your own check has dealt with it."
                     elif sev == "handled":
                         tip += "\n\nRight-click → Show as a problem again."
+                    if self.links_in(text):
+                        tip += "\n\nDouble-click to open the link; right-click to copy it."
                     it.setToolTip(1, tip)
                     if sev == "handled":
                         f = it.font(1)
@@ -1089,13 +1092,37 @@ class Main(QMainWindow):
             return
         sev, plugin, text = msg
         menu = QMenu(self)
+        for url in self.links_in(text):                   # e.g. the page of a mod that's missing
+            short = re.sub(r"^https?://(www\.)?", "", url).rstrip("/")
+            menu.addAction(f"Open {short}").triggered.connect(lambda _=False, u=url: QDesktopServices.openUrl(QUrl(u)))
+            menu.addAction("Copy link").triggered.connect(lambda _=False, u=url: self.copy_link(u))
         if sev in ("error", "warn"):
+            menu.addSeparator()
             menu.addAction("Mark as handled…").triggered.connect(lambda: self.mark_handled(plugin, text))
         elif sev == "handled":
+            menu.addSeparator()
             menu.addAction("Show as a problem again").triggered.connect(lambda: self.unmark_handled(plugin, text))
-        else:
+        if menu.isEmpty():
             return
         menu.exec(self.plugins.viewport().mapToGlobal(pos))
+
+    @staticmethod
+    def links_in(text):
+        seen = []
+        for u in re.findall(r"https?://[^\s)\]>\"']+", text or ""):
+            u = u.rstrip(".,;")
+            if u not in seen:
+                seen.append(u)
+        return seen
+
+    def copy_link(self, url):
+        QApplication.clipboard().setText(url)
+        self.say(f"Copied {url}")
+
+    def plugin_double_clicked(self, it, _col):
+        links = self.links_in((it.data(0, Qt.UserRole) or (None, None, ""))[2]) if it.data(0, Qt.UserRole) else []
+        if links:
+            QDesktopServices.openUrl(QUrl(links[0]))
 
     def mark_handled(self, plugin, text):
         d = QDialog(self)
