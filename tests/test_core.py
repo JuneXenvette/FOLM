@@ -228,6 +228,9 @@ class Requirements(Temp):
     def test_filters(self):
         self.assertTrue(requires.WINDOWS_RUNTIME.search("Microsoft Visual C++ 2019 Redistributable"))
         self.assertTrue(requires._is_extender("xNVSE 6"))
+        self.assertTrue(requires._is_extender("Fallout Script Extender"))
+        self.assertTrue(requires._is_extender("FOSE"))
+        self.assertFalse(requires._is_extender("Fallout 3 Patch"))
         self.assertTrue(requires.CONDITIONAL.search("Only for the TTW version"))
 
 
@@ -283,6 +286,14 @@ class InstallerKinds(Temp):
                          "exe-installer")
         bain = self.zip("b.zip", {"00 Core/A.esp": "a", "10 Extra/B.esp": "b"})
         self.assertEqual(detect.detect(bain)["type"], "bain")
+
+    def test_fose_counts_as_installed(self):
+        from folm_core import requires
+        self.assertFalse(requires._has_xnvse(self.m))
+        os.makedirs(os.path.join(self.m.mods_dir, "FOSE", "_root"))
+        open(os.path.join(self.m.mods_dir, "FOSE", "_root", "fose_loader.exe"), "w").close()
+        self.m.add_folder("FOSE")
+        self.assertTrue(requires._has_xnvse(self.m))                 # enabled, not deployed yet
 
     @unittest.skipUnless(shutil.which("7z"), "7z not installed")
     def test_tools_tab(self):

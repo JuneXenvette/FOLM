@@ -37,25 +37,41 @@ KNOWN = {
 }
 
 # Nexus mods that aren't installed as ordinary mods: how to tell you have them anyway.
+LOADERS = {"courier": "nvse_loader.exe", "wanderer": "fose_loader.exe"}
+
+
 def _has_xnvse(m):
-    return any(f.lower() == "nvse_loader.exe" for f in os.listdir(m.data["game_dir"]))
+    """The game's script extender (xNVSE for New Vegas, FOSE for Fallout 3) is in the game folder,
+    or in an enabled mod (not deployed yet)."""
+    loader = LOADERS.get(m.edition, "nvse_loader.exe")
+    if any(f.lower() == loader for f in os.listdir(m.data["game_dir"])):
+        return True
+    for mod in m.mods():
+        d = os.path.join(m.mods_dir, mod["name"])
+        if mod.get("enabled") and os.path.isdir(d):
+            for _dp, _dn, fn in os.walk(d):
+                if any(f.lower() == loader for f in fn):
+                    return True
+    return False
 
 
 def _has_4gb(m):
     return m._exe_is_4gb() is not False
 
 
-SPECIAL = {"newvegas": {67883: _has_xnvse, 62552: _has_4gb}}
+SPECIAL = {"newvegas": {67883: _has_xnvse, 62552: _has_4gb}, "fallout3": {8606: _has_xnvse}}
 
 # Nexus requirement entries that don't apply on Linux, or that FOLM checks another way
 WINDOWS_RUNTIME = re.compile(r"visual c\+\+|redistributable|vc_?redist|directx|\.net framework|xinput", re.I)
-EXTENDER_WORDS = {"nvse", "xnvse", "new", "vegas", "script", "extender", "latest", "version", "or", "newer", "beta"}
+EXTENDER_WORDS = {"nvse", "xnvse", "fose", "new", "vegas", "fallout", "script", "extender", "latest", "version", "or",
+                  "newer", "beta"}
 
 
 def _is_extender(name):
-    """'xNVSE 6', 'NVSE', 'New Vegas Script Extender (NVSE xNVSE)' -> True; 'JIP LN NVSE Plugin' -> False."""
+    """'xNVSE 6', 'NVSE', 'New Vegas Script Extender (NVSE xNVSE)', 'FOSE', 'Fallout Script Extender' -> True;
+    'JIP LN NVSE Plugin' -> False."""
     words = re.findall(r"[a-z]+|\d+", name.lower())
-    return bool({"nvse", "xnvse"} & set(words) or {"script", "extender"} <= set(words)) and \
+    return bool({"nvse", "xnvse", "fose"} & set(words) or {"script", "extender"} <= set(words)) and \
         all(w in EXTENDER_WORDS or w.isdigit() for w in words)
 # "Only for X" / "optional" notes: the requirement applies only to some setups
 CONDITIONAL = re.compile(r"\bonly (?:for|if|needed|when|with)\b|\boptional\b|\bif you (?:use|want|have)\b|\bif using\b", re.I)
