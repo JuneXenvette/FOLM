@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (                                         # noqa: 
 )
 
 from folm_core.manager import CATEGORIES, EDITIONS, FolmError, Manager  # noqa: E402
+from folm_core import version                                          # noqa: E402
 
 APP_NAME = "FOLM"
 EDITION_LABELS = {"courier": "Courier — New Vegas", "wanderer": "Wanderer — Fallout 3"}
@@ -230,7 +231,7 @@ class HealthDialog(QDialog):
 class Main(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} — Fallout Linux Manager")
+        self.setWindowTitle(f"{APP_NAME} {version.VERSION} — Fallout Linux Manager")
         self.resize(1280, 780)
         self.setAcceptDrops(True)
         self.jobs = []
@@ -1206,7 +1207,7 @@ def self_test():
     import subprocess
     for mod in ("manager", "desktop", "detect", "fomod", "wintool", "tools"):
         importlib.import_module("folm_core." + mod)
-    from folm_core import archive, version
+    from folm_core import archive
     app = QApplication(sys.argv[:1])
     sz = archive.seven_zip()
     if not sz:
