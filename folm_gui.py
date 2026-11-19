@@ -74,7 +74,6 @@ class FomodDialog(QDialog):
         v.addWidget(QLabel(f"<h3>{group['name']}</h3>{self.TYPE_HINT.get(group['type'], '')}"))
         body = QHBoxLayout()
         left = QVBoxLayout()
-        single = group["type"] in ("SelectExactlyOne", "SelectAtMostOne")
         self.buttons = QButtonGroup(self)
         self.buttons.setExclusive(group["type"] == "SelectExactlyOne")
         default = set(fomod.default_choice(group))
@@ -581,6 +580,8 @@ class Main(QMainWindow):
                     tip = text
                     if sev in ("error", "warn"):
                         tip += "\n\nRight-click → Mark as handled, if a patch or your own check has dealt with it."
+                    if text.startswith("needs cleaning"):
+                        tip += "\n\nRight-click → Clean it with xEdit (reversible: the original isn't changed)."
                     elif sev == "handled":
                         tip += "\n\nRight-click → Show as a problem again."
                     if self.links_in(text):
@@ -1094,6 +1095,14 @@ class Main(QMainWindow):
             short = re.sub(r"^https?://(www\.)?", "", url).rstrip("/")
             menu.addAction(f"Open {short}").triggered.connect(lambda _=False, u=url: QDesktopServices.openUrl(QUrl(u)))
             menu.addAction("Copy link").triggered.connect(lambda _=False, u=url: self.copy_link(u))
+        if plugin and text.startswith("needs cleaning"):
+            menu.addSeparator()
+            have = any(t["id"] == "xedit" and t["exe"] for t in self.m.tools_status())
+            if have:
+                menu.addAction(f"Clean {plugin} with xEdit").triggered.connect(lambda: self.clean_plugin(plugin))
+            else:
+                menu.addAction("Get xEdit to clean it…").triggered.connect(
+                    lambda: self.tabs.setCurrentIndex(self.tabs.indexOf(self.tools_tab)))
         if sev in ("error", "warn"):
             menu.addSeparator()
             menu.addAction("Mark as handled…").triggered.connect(lambda: self.mark_handled(plugin, text))
@@ -1103,6 +1112,17 @@ class Main(QMainWindow):
         if menu.isEmpty():
             return
         menu.exec(self.plugins.viewport().mapToGlobal(pos))
+
+    def clean_plugin(self, plugin):
+        if QMessageBox.question(self, "Clean plugin",
+                                f"Clean {plugin} with xEdit's Quick Auto Clean?\n\n"
+                                "The cleaned copy becomes part of the mod 'xEdit output'. The original file "
+                                "(the mod's or the game's) isn't changed, so turning 'xEdit output' off undoes it.") \
+                != QMessageBox.Yes:
+            return
+        self.run(self.m.clean_plugin, plugin,
+                 then=lambda r: (self.say(f"Cleaned {plugin}." if r else f"xEdit didn't change {plugin}."),
+                                 self.refresh()))
 
     @staticmethod
     def links_in(text):

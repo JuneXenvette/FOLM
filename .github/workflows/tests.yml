@@ -1,0 +1,27 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: System tools the tests use
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+      - name: Python packages
+        run: pip install PyYAML==6.0.2 pyflakes
+      - name: Lint (unused names, undefined names)
+        run: python -m pyflakes folm.py folm_gui.py folm_core/ tests/
+      - name: Core tests (no game, Steam or network needed)
+        env:
+          FOLM_OFFLINE: "1"
+        run: python -m unittest discover -v tests

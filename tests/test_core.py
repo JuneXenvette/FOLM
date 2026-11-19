@@ -295,6 +295,95 @@ class InstallerKinds(Temp):
         self.m.add_folder("FOSE")
         self.assertTrue(requires._has_xnvse(self.m))                 # enabled, not deployed yet
 
+    def _xedit_setup(self):
+        os.makedirs(os.path.join(self.m.mods_dir, "Cool Mod"))
+        self.src = os.path.join(self.m.mods_dir, "Cool Mod", "Cool.esp")
+        with open(self.src, "w") as fh:
+            fh.write("original mod plugin")
+        os.utime(self.src, (1500000000, 1500000000))                       # a Fallout 3 load-order date
+        self.m.add_folder("Cool Mod")
+        self.esm = os.path.join(self.game, "Data", "Anchorage.esm")
+        with open(self.esm, "w") as fh:
+            fh.write("vanilla")
+        self.m.deploy()
+        self.dep = os.path.join(self.game, "Data", "Cool.esp")
+        self.assertTrue(os.path.samefile(self.dep, self.src))                 # deployed as a hard link
+
+    def test_xedit_cannot_touch_mods_or_game(self):
+        self._xedit_setup()
+
+        def bad_xedit(out):
+            self.assertFalse(os.path.samefile(self.dep, self.src))            # it only sees a copy
+            self.assertEqual(int(os.path.getmtime(self.dep)), 1500000000)      # with the same date
+            with open(self.dep, "r+") as fh:                                  # writes INTO the file
+                fh.write("EDITED")
+            with open(self.esm, "w") as fh:                                   # and into a game file
+                fh.write("cleaned")
+            open(os.path.join(self.game, "Data", "Cool.esp.save.2026_11_18"), "w").close()   # half-saved
+        got = self.m.run_tool("xedit", runner=bad_xedit)
+        with open(self.src) as fh:
+            self.assertEqual(fh.read(), "original mod plugin")                # the mod's own file: untouched
+        d = os.path.join(self.m.mods_dir, got)
+        self.assertEqual(sorted(os.listdir(d)), ["Anchorage.esm", "Cool.esp"])  # no half-saved file
+        with open(os.path.join(d, "Cool.esp")) as fh:
+            self.assertTrue(fh.read().startswith("EDITED"))
+        self.assertEqual(self.m.cur["mods"][-1]["name"], got)                   # last: its edits win
+        self.m.undeploy()
+        with open(self.esm) as fh:
+            self.assertEqual(fh.read(), "vanilla")                             # game file back
+        self.m.deploy()
+        self.m.set_enabled(got, False)
+        self.m.deploy()
+        with open(self.dep) as fh:
+            self.assertEqual(fh.read(), "original mod plugin")                # turning it off undoes it
+        self.assertEqual(self.m.stale_tool_output(), [])
+        self.m.set_enabled(got, True)
+        with open(self.src, "w") as fh:                                       # the mod gets updated
+            fh.write("version 2 of the mod")
+        self.assertEqual(self.m.stale_tool_output(), [(got, "Cool.esp", "Cool Mod")])
+        self.assertTrue(any("older version of 'Cool Mod'" in t for _s, t in self.m.preflight()))
+
+    def test_xedit_interrupted_is_finished_later(self):
+        from folm_core.manager import Manager
+        self._xedit_setup()
+        target = os.path.join(self.m.mods_dir, "xEdit output")
+        self.m._begin_tool_session(target)                                   # FOLM crashes mid-run:
+        with open(self.dep, "r+") as fh:
+            fh.write("EDITED")
+        tmp = self.esm + ".tmp"
+        with open(tmp, "w") as fh:
+            fh.write("cleaned")
+        os.replace(tmp, self.esm)
+        m2 = Manager("wanderer")                                              # next start
+        m2.deploy()
+        with open(self.src) as fh:
+            self.assertEqual(fh.read(), "original mod plugin")
+        self.assertIn("xEdit output", [x["name"] for x in m2.mods()])
+        with open(os.path.join(target, "Anchorage.esm")) as fh:
+            self.assertEqual(fh.read(), "cleaned")
+        m2.undeploy()
+        with open(self.esm) as fh:
+            self.assertEqual(fh.read(), "vanilla")
+
+    def test_xedit_keeps_earlier_work_and_cleans(self):
+        self._xedit_setup()
+
+        def edit(text):
+            def run(out):
+                with open(self.dep, "w") as fh:
+                    fh.write(text)
+            return run
+        self.m.run_tool("xedit", runner=edit("first edit"))
+        self.m.run_tool("xedit", runner=edit("second edit"))
+        hist = self.m._tool_history_dir(os.path.join(self.m.mods_dir, "xEdit output"))
+        runs = sorted(os.listdir(hist))
+        with open(os.path.join(hist, runs[-1], "Cool.esp")) as fh:
+            self.assertEqual(fh.read(), "first edit")                          # the earlier version is kept
+        from folm_core.manager import FolmError
+        with self.assertRaises(FolmError):
+            self.m.clean_plugin("Fallout3.esm", runner=lambda out: None)       # never the main file
+        self.assertIsNone(self.m.clean_plugin("Cool.esp", runner=lambda out: None) and None)
+
     @unittest.skipUnless(shutil.which("7z"), "7z not installed")
     def test_tools_tab(self):
         from folm_core import detect, tools

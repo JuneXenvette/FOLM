@@ -927,6 +927,7 @@ class Manager:
     # ------------------------------------------------------------ game
     def deploy(self, log=_quiet):
         self.need()
+        self.finish_interrupted_tool(log)
         self._game_settings(apply=False)          # undo the last run's INI/dxvk changes first (never caught as strays)
         if os.path.exists(self.lo_state):
             loadorder.restore(self.plugins_txt, self.lo_state, log=_quiet)
@@ -950,6 +951,7 @@ class Manager:
 
     def undeploy(self, log=_quiet):
         self.need()
+        self.finish_interrupted_tool(log)
         self._game_settings(apply=False, log=log)
         loadorder.restore(self.plugins_txt, self.lo_state, log=log)
         dep.undeploy(self.manifest, log=log, overwrite_dir=self.overwrite_dir)
@@ -1210,6 +1212,9 @@ class Manager:
             for save, miss in self.save_warnings([n for n, on, _, _ in rows if on]):
                 out.append(("warn", f"Save '{save}' uses {', '.join(miss[:4])}{' …' if len(miss) > 4 else ''}, "
                                     "which won't be loaded. Loading it can break quests and scripts."))
+        for mod, plugin, src in self.stale_tool_output():
+            out.append(("warn", f"{plugin} in '{mod}' was made from an older version of '{src}' (it was updated "
+                                f"since). Redo that change in xEdit, or turn '{mod}' off."))
         if not int(self.setting("fps_cap") or 0):
             from . import ini
             vsync = ini.get(os.path.join(self.ini_dir(), "FalloutCustom.ini"), "Display", "iPresentInterval") \
@@ -1476,48 +1481,207 @@ class Manager:
         log(f"Installed the tool {name}. Open it from the Tools tab.")
         return name, {"type": "tool", "tool": tool_id, "warnings": []}
 
-    def _guard_game_plugins(self, keep):
-        """Copy the game's own plugins (Fallout3.esm, the DLC ESMs...: not deployed by FOLM) aside before a
-        tool that can save over them runs (xEdit cleaning a DLC). Returns {name: (copy, stat)}."""
-        ours = set()
+    # xEdit and xLODGen can save over any plugin they load. A "tool session" makes that safe:
+    #  * the game's own plugins (Fallout3.esm, DLC ESMs) are copied aside first,
+    #  * each deployed mod plugin (normally a hard link to the mod's own file) is swapped for a copy, so
+    #    nothing a tool writes can reach the mod's original,
+    #  * the tool's earlier output is snapshotted (hard links: no extra space),
+    #  * a journal on disk lists all of it, so if FOLM is closed or crashes mid-run, the next deploy,
+    #    undeploy or tool run finishes the job: changed plugins go into the tool's mod, originals go back.
+    TOOL_PLUGINS = (".esm", ".esp", ".esl")
+
+    def _tool_session_dir(self):
+        return os.path.join(home(), "tools", f"session-{self.edition}")
+
+    def _begin_tool_session(self, target, log=_quiet):
+        sd = self._tool_session_dir()
+        if os.path.exists(os.path.join(sd, "journal.json")):
+            self._finish_tool_session(log)
+        if os.path.isdir(sd):
+            shutil.rmtree(sd)
+        os.makedirs(os.path.join(sd, "game"))
+        ours, mf = set(), {"files": []}
         if os.path.exists(self.manifest):
             with open(self.manifest) as fh:
-                ours = {os.path.normpath(r["target"]) for r in json.load(fh).get("files", [])}
-        saved = {}
-        for f in os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else []:
-            p = os.path.join(self.data_dir, f)
-            if f.lower().endswith((".esm", ".esp")) and os.path.isfile(p) and not os.path.islink(p) \
-                    and os.path.normpath(p) not in ours:
-                os.makedirs(keep, exist_ok=True)
-                shutil.copy2(p, os.path.join(keep, f))      # a copy, not a link: a tool may write in place
-                saved[f] = (os.path.join(keep, f), os.stat(p))
-        return saved
+                mf = json.load(fh)
+            ours = {os.path.normpath(r["target"]) for r in mf.get("files", [])}
+        game = [f for f in (os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else [])
+                if f.lower().endswith(self.TOOL_PLUGINS) and os.path.isfile(os.path.join(self.data_dir, f))
+                and not os.path.islink(os.path.join(self.data_dir, f))
+                and os.path.normpath(os.path.join(self.data_dir, f)) not in ours]
+        linked = [r for r in mf.get("files", []) if r.get("how") == "link"
+                  and r["target"].lower().endswith(self.TOOL_PLUGINS)
+                  and os.path.exists(r["target"]) and os.path.exists(r["source"])
+                  and os.path.samefile(r["target"], r["source"])]
+        need = sum(os.path.getsize(os.path.join(self.data_dir, f)) for f in game) + \
+            sum(os.path.getsize(r["source"]) for r in linked)
+        free = min(shutil.disk_usage(sd).free, shutil.disk_usage(self.data_dir).free)
+        if free < need + (512 << 20):
+            shutil.rmtree(sd, ignore_errors=True)
+            raise FolmError(f"Not enough free disk space to protect your plugins while the tool runs: it needs "
+                            f"about {(need >> 20) + 512} MB free, there's {free >> 20} MB. Free some space and try again.")
+        journal = {"target": target, "game": {}, "linked": [], "snapshot": None}
+        if os.path.isdir(target) and os.listdir(target):          # the tool's earlier work, kept
+            snap = os.path.join(self._tool_history_dir(target), time.strftime("%Y-%m-%d_%H%M%S"))
+            for rel in dep.walk_rel(target):
+                d = os.path.join(snap, rel)
+                os.makedirs(os.path.dirname(d), exist_ok=True)
+                try:
+                    os.link(os.path.join(target, rel), d)
+                except OSError:
+                    shutil.copy2(os.path.join(target, rel), d)
+            journal["snapshot"] = snap
+            self._prune_history(target)
+        jpath = os.path.join(sd, "journal.json")
 
-    def _restore_game_plugins(self, saved, target, log=_quiet):
-        """Game plugins a tool changed: the changed version goes into the tool's mod `target`, the original
-        goes back into the game folder (so turning the mod off undoes the change). Returns how many."""
-        n = 0
-        for f, (copy, st) in saved.items():
+        def write():
+            with open(jpath + ".tmp", "w") as fh:
+                json.dump(journal, fh, indent=1)
+            os.replace(jpath + ".tmp", jpath)
+        write()                                                    # before anything is changed
+        if game or linked:
+            log(f"  protecting {len(game) + len(linked)} plugin(s) while the tool runs "
+                f"({(need >> 20)} MB copied; this takes a moment)")
+        for f in game:
             p = os.path.join(self.data_dir, f)
+            shutil.copy2(p, os.path.join(sd, "game", f))
+            st = os.stat(p)
+            journal["game"][f] = [st.st_ino, st.st_size, st.st_mtime_ns]
+            write()
+        for r in linked:
+            t = r["target"]
+            tmp = t + ".folm-copy"
+            shutil.copy2(r["source"], tmp)                         # keeps the date (Fallout 3's load order)
+            os.replace(tmp, t)                                     # the game folder now has a separate copy
+            st = os.stat(t)
+            journal["linked"].append({"target": t, "source": r["source"],
+                                      "stat": [st.st_ino, st.st_size, st.st_mtime_ns]})
+            write()
+        return journal
+
+    def _tool_history_dir(self, target):
+        return os.path.join(home(), "tools", "earlier output", self.edition, os.path.basename(target))
+
+    def _prune_history(self, target, keep=10):
+        d = self._tool_history_dir(target)
+        runs = sorted(os.listdir(d)) if os.path.isdir(d) else []
+        for old in runs[:-keep]:
+            shutil.rmtree(os.path.join(d, old), ignore_errors=True)
+
+    def _finish_tool_session(self, log=_quiet):
+        """Put the game folder back the way FOLM left it; what the tool changed goes into its mod.
+        Returns {"changed": n, "made_from": {rel: {"from", "fp"}}}. Safe to run again after a crash."""
+        sd = self._tool_session_dir()
+        jpath = os.path.join(sd, "journal.json")
+        if not os.path.exists(jpath):
+            return {"changed": 0, "made_from": {}}
+        with open(jpath) as fh:
+            journal = json.load(fh)
+        target = journal["target"]
+        changed, made_from = 0, {}
+
+        def into_mod(p, rel):
+            d = os.path.join(target, rel)
+            os.makedirs(os.path.dirname(d), exist_ok=True)
+            if os.path.lexists(d):
+                os.remove(d)                     # (the earlier version is in the snapshot)
+            shutil.move(p, d)
+
+        for f, was in journal["game"].items():
+            copy, p = os.path.join(sd, "game", f), os.path.join(self.data_dir, f)
+            if not os.path.exists(copy):
+                continue
             now = os.stat(p) if os.path.exists(p) else None
-            if now and (now.st_ino, now.st_size, now.st_mtime_ns) == (st.st_ino, st.st_size, st.st_mtime_ns):
+            if now and [now.st_ino, now.st_size, now.st_mtime_ns] == was:
+                os.remove(copy)
                 continue
             if now:
-                d = os.path.join(target, f)
-                os.makedirs(target, exist_ok=True)
-                if os.path.lexists(d):
-                    os.remove(d)
-                shutil.move(p, d)
-                n += 1
+                made_from[f] = {"from": "game", "fp": self.file_fingerprint(copy)}
+                into_mod(p, f)
+                changed += 1
+                log(f"  {f} (a game file) was changed: the new version is in {os.path.basename(target)!r}, "
+                    "the original is back in the game folder")
             shutil.move(copy, p)
-            log(f"  {f} (a game file) was changed: the new version is in {os.path.basename(target)!r}, "
-                "the original is back in the game folder")
-        return n
+        for rec in journal["linked"]:
+            t, s = rec["target"], rec["source"]
+            if os.path.exists(t) and os.path.exists(s) and os.path.samefile(t, s):
+                continue                          # never swapped (FOLM stopped before this one)
+            if os.path.exists(t):
+                st = os.stat(t)
+                if [st.st_ino, st.st_size, st.st_mtime_ns] != rec["stat"]:
+                    rel = os.path.relpath(t, self.data_dir)
+                    if rel.startswith(".."):
+                        rel = os.path.join(dep.ROOT_DIR, os.path.relpath(t, self.data["game_dir"]))
+                    inside = os.path.commonpath([os.path.abspath(s), os.path.abspath(target)]) == \
+                        os.path.abspath(target)
+                    if not inside:
+                        made_from[rel] = {"from": s, "fp": self.file_fingerprint(s)}
+                    into_mod(t, rel)
+                    changed += 1
+                else:
+                    os.remove(t)                  # unchanged copy
+            if not os.path.lexists(t) and os.path.exists(s):
+                os.link(s, t)                     # back to the normal hard link
+        # half-written saves (xEdit stopped while saving) don't belong in a mod
+        for f in os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else []:
+            if re.search(r"\.(esm|esp|esl)\.save(\.|$)", f, re.I) or f.lower().endswith(".folm-copy"):
+                d = os.path.join(sd + "-unfinished", f)
+                os.makedirs(os.path.dirname(d), exist_ok=True)
+                shutil.move(os.path.join(self.data_dir, f), d)
+                log(f"  {f} looks like an unfinished save; kept aside in {os.path.dirname(d)}")
+        os.remove(jpath)
+        shutil.rmtree(sd, ignore_errors=True)
+        return {"changed": changed, "made_from": made_from}
 
-    def run_tool(self, tool_id, log=_quiet, runner=None):
+    def finish_interrupted_tool(self, log=_quiet):
+        """If a tool run was interrupted (FOLM closed or crashed), finish it now."""
+        if not os.path.exists(os.path.join(self._tool_session_dir(), "journal.json")):
+            return None
+        log("Finishing an xEdit/xLODGen run that was interrupted...")
+        with open(os.path.join(self._tool_session_dir(), "journal.json")) as fh:
+            target = json.load(fh)["target"]
+        res = self._finish_tool_session(log)
+        if res["changed"]:
+            self._register_tool_mod(os.path.basename(target), "a tool", res["made_from"])
+        return res
+
+    def _register_tool_mod(self, mod_name, tool_name, made_from):
+        target = os.path.join(self.mods_dir, mod_name)
+        if not os.path.isdir(target) or not os.listdir(target):
+            return False
+        entry = next((x for x in self.cur["mods"] if x["name"] == mod_name), None)
+        if entry is None:
+            entry = {"name": mod_name, "enabled": True, "type": "folder", "tags": ["ours"],
+                     "notes": f"Made by {tool_name} in FOLM. Earlier versions: {self._tool_history_dir(target)}",
+                     "category": "Our mods"}
+        else:
+            self.cur["mods"].remove(entry)
+        entry["enabled"] = True
+        entry.setdefault("made_from", {}).update(made_from)
+        self.cur["mods"].append(entry)            # last, so its edits win over the plugins they came from
+        self.save()
+        return True
+
+    def stale_tool_output(self):
+        """[(mod, plugin, source mod)] for tool-made plugins whose original has changed since (mod updated)."""
+        out = []
+        for x in self.mods():
+            if not x.get("enabled"):
+                continue
+            for rel, info in (x.get("made_from") or {}).items():
+                src = info.get("from")
+                if not src or src == "game" or not os.path.exists(os.path.join(self.mods_dir, x["name"], rel)):
+                    continue
+                now = self.file_fingerprint(src) if os.path.exists(src) else None
+                if now and info.get("fp") and now != info["fp"]:
+                    out.append((x["name"], os.path.basename(rel), os.path.relpath(src, self.mods_dir).split(os.sep)[0]))
+        return out
+
+    def run_tool(self, tool_id, log=_quiet, runner=None, extra_args=()):
         """Run xEdit or xLODGen on this profile's mods (deployed first). What it saves becomes a mod:
-        "xEdit output" / "Generated LOD" (made, or added to, and enabled). Returns that mod's name or None."""
-        from . import tools, wintool
+        "xEdit output" / "Generated LOD" (made, or added to, and enabled). Returns that mod's name or None.
+        Your mods' files and the game's own plugins can't be changed by it (see _begin_tool_session)."""
+        from . import tools, wintool, wineprefix
         self.need()
         if tool_id == "geck":
             return self.geck(log=log, runner=runner)
@@ -1525,6 +1689,13 @@ class Manager:
         exe = info["exe"]
         if not exe and runner is None:
             raise FolmError(f"{info['name']} isn't installed. {tools.BY_ID[tool_id]['how']} ({info['get']})")
+        if runner is None and wineprefix.prefix_busy(self.data["prefix"]):
+            raise FolmError(f"Close the game first: {info['name']} can't work on files the game has open.")
+        if runner is None:
+            try:
+                wine, _ = wintool.find_wine([STEAM, os.path.expanduser("~/.steam/steam")], steam_libraries())
+            except wintool.ToolError as e:
+                raise FolmError(f"to run {info['name']}, {e}")
         if not self.deployed:
             self.deploy(log)
         mod_name = tools.OUTPUT_MOD[tool_id]
@@ -1533,16 +1704,13 @@ class Manager:
         work = tempfile.mkdtemp(prefix=f".run-{tool_id}-", dir=os.path.join(home(), "tools"))
         out = os.path.join(work, "output")
         os.makedirs(out)
+        self._begin_tool_session(target, log)
         try:
-            saved = self._guard_game_plugins(os.path.join(work, "game-plugins"))
             if runner:
                 runner(out)
             else:
-                try:
-                    wine, _ = wintool.find_wine([STEAM, os.path.expanduser("~/.steam/steam")], steam_libraries())
-                except wintool.ToolError as e:
-                    raise FolmError(f"to run {info['name']}, {e}")
-                cmd = [wine, os.path.basename(exe)] + tools.args_for(tool_id, self.edition, self.data_dir, out)
+                cmd = [wine, os.path.basename(exe)] + tools.args_for(tool_id, self.edition, self.data_dir, out) \
+                    + list(extra_args)
                 env = dict(os.environ, WINEPREFIX=os.path.join(self.data["prefix"], "pfx"), WINEDEBUG="-all")
                 log(f"Opening {info['name']} (close it when you're done; FOLM collects what it saved)...")
                 subprocess.Popen(cmd, cwd=os.path.dirname(exe), env=env, stdin=subprocess.DEVNULL,
@@ -1551,6 +1719,10 @@ class Manager:
                 while subprocess.run(["pgrep", "-fi", f"[{b[0]}]{re.escape(b[1:])}"],
                                      capture_output=True).returncode == 0:
                     time.sleep(2)
+        finally:
+            res = self._finish_tool_session(log)        # always: even if the tool or FOLM failed
+        try:
+            got = res["changed"]
             # xEdit's backups and cache go with the tool, not into a mod
             keep = os.path.join(tools.tools_dir(home(), tool_id), "FOLM backups", self.edition)
             if os.path.isdir(self.data_dir):
@@ -1562,7 +1734,6 @@ class Manager:
                             os.makedirs(os.path.dirname(os.path.join(dest, rel)), exist_ok=True)
                             shutil.move(os.path.join(self.data_dir, d, rel), os.path.join(dest, rel))
                         shutil.rmtree(os.path.join(self.data_dir, d), ignore_errors=True)
-            got = self._restore_game_plugins(saved, target, log)
             got += self._catch_into(target, log)
             for rel in dep.walk_rel(out):
                 d = os.path.join(target, rel)
@@ -1573,21 +1744,24 @@ class Manager:
                 got += 1
         finally:
             shutil.rmtree(work, ignore_errors=True)
-        if not os.path.isdir(target) or not os.listdir(target):
+        if not self._register_tool_mod(mod_name, info["name"], res["made_from"]):
             if os.path.isdir(target):
                 os.rmdir(target)
             log(f"{info['name']} closed: nothing was saved.")
             return None
-        entry = next((x for x in self.cur["mods"] if x["name"] == mod_name), None)
-        if entry is None:
-            self.cur["mods"].append({"name": mod_name, "enabled": True, "type": "folder", "tags": ["ours"],
-                                     "notes": f"Made by {info['name']} in FOLM.", "category": "Our mods"})
-        else:
-            entry["enabled"] = True
-        self.save()
         self.deploy(log)
-        log(f"{info['name']} closed: {got} file(s) saved into the mod {mod_name!r} (enabled and deployed).")
+        log(f"{info['name']} closed: {got} file(s) saved into the mod {mod_name!r} (enabled and deployed). "
+            "Turn that mod off to undo it.")
         return mod_name
+
+    def clean_plugin(self, plugin, log=_quiet, runner=None):
+        """Clean a plugin LOOT says is dirty, with xEdit's Quick Auto Clean. The cleaned copy goes into
+        'xEdit output' (turn it off to undo); the mod's own file and the game's files stay as they were."""
+        if plugin.lower() in ("falloutnv.esm", "fallout3.esm"):
+            raise FolmError(f"{plugin} is the game's main file: it should never be cleaned.")
+        log(f"Cleaning {plugin} with xEdit (Quick Auto Clean). Its window closes by itself when it's done.")
+        return self.run_tool("xedit", log=log, runner=runner,
+                             extra_args=["-QAC", "-autoexit", "-autoload", plugin])
 
     def latest_session(self):
         d = os.path.join(self.dir, "sessions")

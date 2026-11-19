@@ -1,0 +1,50 @@
+name: Something doesn't work
+description: A mod won't install, the game won't start, or FOLM shows an error.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        FOLM is a community project provided as-is: the original author doesn't maintain it, so a fix
+        depends on someone picking it up. A complete report makes that much more likely.
+
+        **Please don't paste your Nexus API key or anything from `nexus.json`.** FOLM's crash report and
+        health check already leave out your home folder and user name.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: edition
+    attributes:
+      label: Game
+      options:
+        - New Vegas (Courier edition)
+        - New Vegas + TTW (Courier edition)
+        - Fallout 3 (Wanderer edition)
+    validations:
+      required: true
+  - type: input
+    id: mod
+    attributes:
+      label: The mod involved (name and Nexus link), if any
+  - type: textarea
+    id: report
+    attributes:
+      label: FOLM's report
+      description: |
+        After a crash, the crash report FOLM offers (or run `python3 folm.py crash-report`).
+        Otherwise the output of `python3 folm.py health` and the Log tab's last lines.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Your system
+      description: Distro, desktop (X11 or Wayland), GPU, Proton version
+      placeholder: Linux Mint 22, Cinnamon X11, AMD RX 580, GE-Proton10-34
+    validations:
+      required: true

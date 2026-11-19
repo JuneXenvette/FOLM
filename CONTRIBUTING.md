@@ -9,6 +9,7 @@ what a newcomer needs to find their way around.
 ```bash
 ./setup.sh                                    # Python environment in .venv + system tool check
 .venv/bin/python -m unittest discover tests   # core tests: no game, Steam or network needed
+                                              # (GitHub runs these on every push and pull request)
 ./run-folm.sh                                 # the app
 .venv/bin/python folm.py --help               # the command line (same engine)
 ```
@@ -26,7 +27,7 @@ Point FOLM at a throwaway data folder while developing, so your real setup stays
 | `folm_core/fomod.py` | Native XML FOMOD installer |
 | `folm_core/legacy.py`, `fomm_shim/FommShim.cs` | Old FOMM C# installers: Mono + FOLM's FOMM API shim, sandboxed with bubblewrap |
 | `folm_core/wintool.py` | Windows `.exe` installers/patchers: Proton's Wine + bubblewrap, game folder mounted copy-on-write (overlayfs in a user namespace); writes become the mod |
-| `folm_core/tools.py` | Tools tab catalog (GECK, xEdit, xLODGen): where to get them, finding and running them in the game's prefix |
+| `folm_core/tools.py` | Tools tab catalog (GECK, xEdit, xLODGen); running them safely is `Manager.run_tool` / `_begin_tool_session` in manager.py |
 | `folm_core/deploy.py` | Hard-link deployment, case merging, game-file backups, exact undeploy |
 | `folm_core/loadorder.py`, `plugins.py`, `loot.py` | Plugin order: masters, LOOT masterlist rules, plugins.txt + timestamps |
 | `folm_core/health.py`, `requires.py` | Health check; requirement scan (DLL startup checks, known list, Nexus requirements) |
@@ -69,8 +70,8 @@ These kept FOLM safe and pleasant to use; please keep them.
 - **Fallout 3 (Wanderer edition):** FOSE, the Windows patchers and UF3P are tested (docs/compatibility.md); more FO3 mods and a long play session would help.
 - **Wayland:** the borderless-window fix uses X11 tools; under Wayland the game runs but that fix doesn't.
 - **Update checks** for Nexus mods (installing a newer file already offers "Update").
-- **xEdit Quick Auto Clean** from LOOT's "dirty plugin" warnings (a "Clean it" button), and testing
-  xLODGen's output in game: the Tools tab runs both, but neither is tested on a real game yet.
+- **xEdit and xLODGen on a real game:** the Tools tab and "Clean it with xEdit" are built and tested with
+  stand-in tools only ([docs/tools.md](docs/tools.md)). Try them and note results in `docs/compatibility.md`.
 - **Packaging:** AppImage or Flatpak so players don't need the Python setup.
 - **The FO3 → New Vegas converter** ([docs/fo3-converter.md](docs/fo3-converter.md)): only the check report works.
 

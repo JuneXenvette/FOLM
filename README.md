@@ -65,7 +65,9 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
 - **GECK under Proton** for mod makers (Tools tab): opens with your mods loaded and turns what you save into a mod.
 - **Tools tab:** GECK, FNVEdit/FO3Edit (xEdit) and xLODGen. Installed tools open with your mods loaded; missing
   ones are greyed out with a link to get them. Drop a tool's download on FOLM to add it. What xEdit saves becomes
-  the mod "xEdit output", what xLODGen builds becomes "Generated LOD" (xEdit's backups are kept aside).
+  the mod "xEdit output", what xLODGen builds becomes "Generated LOD". LOOT's "needs cleaning" warnings get a
+  **Clean it with xEdit** option. xEdit can't change your mods' files or the game's: everything it saves is a
+  mod you can turn off ([how](docs/tools.md)).
 
 ## Install
 

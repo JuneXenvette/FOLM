@@ -179,7 +179,6 @@ def cmd_tag(a, m):
 
 
 def cmd_sort(a, m):
-    from folm_core.manager import CATEGORIES
     old = [x["name"] for x in m.mods()]
     new = m.sorted_order() if a.preview else m.sort_mods()[1]
     sec = m.sections()
@@ -196,7 +195,6 @@ def cmd_sort(a, m):
 
 
 def cmd_category(a, m):
-    from folm_core.manager import CATEGORIES
     m.set_category(a.name, None if a.category.lower() == "auto" else a.category)
     print(f"{a.name!r} -> {m.category_of(m.mod(a.name))}")
 
