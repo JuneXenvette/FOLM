@@ -280,13 +280,10 @@ class Main(QMainWindow):
         self.btn_play = QPushButton("▶  Play")
         self.btn_play.setStyleSheet("font-weight: bold; padding: 4px 16px;")
         self.btn_play.clicked.connect(self.play)
-        self.btn_geck = QPushButton("🛠 GECK")
-        self.btn_geck.setToolTip("Make or edit a mod in GECK with your mods loaded")
-        self.btn_geck.clicked.connect(self.open_geck)
         self.btn_health = QPushButton("🩺 Health check")
         self.btn_health.setToolTip("Check that your mods are really working: files, plugins, and what loaded last launch")
         self.btn_health.clicked.connect(self.health_check)
-        for w in (self.btn_deploy, self.btn_undeploy, self.btn_play, self.btn_geck, self.btn_health):
+        for w in (self.btn_deploy, self.btn_undeploy, self.btn_play, self.btn_health):
             tb.addWidget(w)
         tb.addSeparator()
         b = QPushButton("⟳ Refresh")

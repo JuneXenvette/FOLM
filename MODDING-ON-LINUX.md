@@ -30,7 +30,7 @@ uses a DLC or another mod's ESM).
 ## 2. Make a new mod
 
 1. In FOLM, pick the **profile** you want to build against (the mods the GECK should see).
-2. Click **🛠 GECK** → choose **"A new mod"**.
+2. In the **Tools** tab, click **Open** next to GECK → choose **"A new mod"**.
 3. Build your mod in the GECK. **File → Save** like normal (e.g. `MyMod.esp`).
 4. **Close the GECK.**
 5. FOLM shows what you saved and asks for a name → type one → done.
@@ -44,7 +44,7 @@ and sorted with LOOT like everything else. Click **▶ Play** to try it.
 
 ## 3. Keep working on a mod
 
-1. Click **🛠 GECK** → choose **"Edit: My Mod"**.
+1. In the **Tools** tab, click **Open** next to GECK → choose **"Edit: My Mod"**.
 2. Make your changes, save, close the GECK.
 3. FOLM puts the changes straight back into that mod.
 
