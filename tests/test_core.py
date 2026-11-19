@@ -257,6 +257,7 @@ class InstallerKinds(Temp):
     def setUp(self):
         super().setUp()
         os.environ["FOLM_HOME"] = os.path.join(self.tmp, "home")
+        os.environ["FOLM_OFFLINE"] = "1"                          # no Nexus lookups from tests
         from folm_core.manager import Manager
         self.game = os.path.join(self.tmp, "game")
         os.makedirs(os.path.join(self.game, "Data"))
@@ -265,6 +266,7 @@ class InstallerKinds(Temp):
 
     def tearDown(self):
         os.environ.pop("FOLM_HOME", None)
+        os.environ.pop("FOLM_OFFLINE", None)
         super().tearDown()
 
     def zip(self, name, files):
@@ -301,6 +303,32 @@ class InstallerKinds(Temp):
         with self.assertRaises(FolmError) as e:
             self.m.install(z, "SF")
         self.assertIn("another game", str(e.exception))
+
+    @unittest.skipUnless(shutil.which("7z"), "7z not installed")
+    def test_duplicates(self):
+        from folm_core.manager import FolmError
+        pick = lambda answer: (lambda step, g: [next(i for i, p in enumerate(g["plugins"]) if p["name"] == answer)]
+                               if step == "Already installed" else fomod.default_choice(g))   # noqa: E731
+        v1 = self.zip("Cool Mod-1234-1-0-1700000000.zip", {"Cool.esp": "v1"})
+        name, _ = self.m.install(v1, "Cool Mod")
+        self.m.mod(name)["notes"] = "mine"
+        with self.assertRaises(FolmError) as e:                       # same file again, under another name
+            self.m.install(v1, "Cool Mod - ENG")
+        self.assertIn("already installed as 'Cool Mod'", str(e.exception))
+        name2, _ = self.m.install(v1, "Cool Mod", chooser=pick("Install a second copy"))
+        self.assertEqual(name2, "Cool Mod (2)")
+        self.m.remove(name2)
+        self.m.mod(name)["enabled"] = False
+        v2 = self.zip("Cool Mod-1234-1-1-1710000000.zip", {"Cool.esp": "v2"})
+        self.assertEqual(self.m.find_duplicates(v2)[0][0], "version")
+        self.m.install(v2)                                            # default answer: Update
+        self.assertEqual([x["name"] for x in self.m.mods()], ["Cool Mod"])
+        mod = self.m.mod("Cool Mod")
+        self.assertEqual((mod["notes"], mod["enabled"]), ("mine", False))   # kept through the update
+        with open(os.path.join(self.m.mods_dir, "Cool Mod", "Cool.esp")) as fh:
+            self.assertEqual(fh.read(), "v2")
+        ini = self.zip("Cool Mod INI-1234-1-0-1700000001.zip", {"Cool.ini": "x"})   # other file, same page
+        self.assertEqual(self.m.find_duplicates(ini), [])
 
     def test_collect_tool_output(self):
         from folm_core import wintool

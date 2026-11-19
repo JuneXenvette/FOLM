@@ -247,13 +247,35 @@ def run(exe, tool_dir, job, game_dir, other_games, prefix, wine, proton_dir, arg
     cmd = sandbox_cmd(script, game_dir, upper, work, rw, ro)
     log(f"  running {os.path.basename(exe)} with Wine (sandboxed: no network; your game folder is protected)")
     started = time.time()
-    r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                       stdin=subprocess.DEVNULL)      # "Press any key to continue" returns at once
+    errf = os.path.join(job, "wine-output.txt")
+    with open(errf, "w") as eh:
+        proc = subprocess.Popen(cmd, stdout=eh, stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL)    # "Press any key to continue" returns at once
+        shown, last = None, started
+        while proc.poll() is None:
+            time.sleep(2)
+            if time.time() - last >= 30:                # live progress: a busy tool's window may not redraw
+                last = time.time()
+                gb = (_tree_size(upper) + _tree_size(output)) / 1e9
+                mins = int((last - started) / 60)
+                text = (f"  still working ({mins} min): {gb:.1f} GB written so far. The installer's window may "
+                        "look blank or frozen while it works; that's normal, let it finish.") if gb >= 0.05 else \
+                       (f"  waiting for {os.path.basename(exe)} ({mins} min): finish its steps in its own window.")
+                if text != shown:
+                    log(text)
+                    shown = text
+
+    class _R:
+        pass
+    r = _R()
+    r.returncode = proc.returncode
+    with open(errf, errors="replace") as eh:
+        r.stderr, r.stdout = eh.read()[-20000:], ""
     try:
         os.remove(o_drive)
     except OSError:
         pass
-    shutil.rmtree(work, ignore_errors=True)
+    remove_tree(work)
     err = (r.stderr or "").strip()
     if r.returncode != 0 and ("mount" in err.lower() or "bwrap:" in err):
         raise ToolError("couldn't set up the sandbox: " + err.splitlines()[-1][:300])
@@ -262,6 +284,39 @@ def run(exe, tool_dir, job, game_dir, other_games, prefix, wine, proton_dir, arg
     if r.returncode not in (0,) and tail:
         log("  Wine said: " + " | ".join(tail)[:600])
     return {"upper": upper, "output": output, "tool_files": tool_files, "exit": r.returncode, "messages": tail}
+
+
+def remove_tree(path):
+    """rmtree that also removes overlayfs's work folder (left with no permissions)."""
+    def fix(func, p, _exc):
+        try:
+            os.chmod(os.path.dirname(p), 0o700)
+            os.chmod(p, 0o700)
+        except OSError:
+            pass
+        try:
+            func(p)
+        except OSError:
+            pass
+    if os.path.lexists(path):
+        for dp, dn, _ in os.walk(path):
+            for d in dn:
+                try:
+                    os.chmod(os.path.join(dp, d), 0o700)
+                except OSError:
+                    pass
+        shutil.rmtree(path, onerror=fix)
+
+
+def _tree_size(path):
+    n = 0
+    for dp, _, fn in os.walk(path):
+        for f in fn:
+            try:
+                n += os.lstat(os.path.join(dp, f)).st_size
+            except OSError:
+                pass
+    return n
 
 
 def _is_whiteout(path):

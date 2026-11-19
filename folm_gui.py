@@ -645,6 +645,8 @@ class Main(QMainWindow):
 
     def say(self, text):
         self.log.appendPlainText(text)
+        if self.jobs and text.strip():
+            self.status.setText(text.strip()[:220])          # progress where people look
 
     def after_deploy(self, r):
         if r and r["problems"]:

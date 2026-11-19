@@ -143,7 +143,8 @@ def _cache_path(m):
 
 def _load_cache(m):
     try:
-        return json.load(open(_cache_path(m)))
+        with open(_cache_path(m)) as fh:
+            return json.load(fh)
     except (OSError, ValueError):
         return {}
 
@@ -217,8 +218,11 @@ def _best_named(cands, name):
     return [x for x in cands if extra[id(x)] == best]
 
 
-def check(m, online=True, only=None):
-    """Missing requirements for enabled mods (or just the mod named `only`)."""
+def check(m, online=None, only=None):
+    """Missing requirements for enabled mods (or just the mod named `only`).
+    online=None: ask Nexus unless FOLM_OFFLINE is set (tests, or players who want no lookups)."""
+    if online is None:
+        online = not os.environ.get("FOLM_OFFLINE")
     from .health import EXTENDER
     from . import deploy as dep
     mods = m.mods()

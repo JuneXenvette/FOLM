@@ -202,9 +202,110 @@ class Manager:
         active = [f for f in files if "/" not in f and f.lower().endswith((".esm", ".esp")) and f.lower() not in dis]
         return fomod.Context(files, active)
 
+    @staticmethod
+    def file_fingerprint(path):
+        """Cheap identity of a download: size + hash of its first and last MB (fast even for TTW's 1.3 GB)."""
+        import hashlib
+        try:
+            size = os.path.getsize(path)
+            h = hashlib.sha1(str(size).encode())
+            with open(path, "rb") as fh:
+                h.update(fh.read(1 << 20))
+                if size > 2 << 20:
+                    fh.seek(-(1 << 20), os.SEEK_END)
+                    h.update(fh.read())
+            return h.hexdigest()
+        except OSError:
+            return None
+
+    @staticmethod
+    def _file_stem(path):
+        """'Stewie Tweaks INI-23561-10-0-1700000000.7z' -> 'stewie tweaks ini' (same page, different files differ)."""
+        base = os.path.basename(path or "")
+        return re.sub(r"-\d{2,7}(-[\w.]*)*\.\w+$|\.\w+$", "", base).strip().lower()
+
+    def find_duplicates(self, archive):
+        """Mods (any profile) installed from this same file, or from another version of it.
+        Returns [(kind, profile, mod)] with kind "same" or "version", this profile first."""
+        from . import requires
+        fp = self.file_fingerprint(archive)
+        base = os.path.basename(archive).lower()
+        nid = requires.nexus_id({"source": archive})
+        stem = self._file_stem(archive)
+        hits = []
+        profiles = sorted(self.data["profiles"].items(), key=lambda kv: kv[0] != self.active)
+        for prof, p in profiles:
+            for mod in p["mods"]:
+                src = mod.get("source") or ""
+                if not src:
+                    continue
+                if (fp and mod.get("source_fp") == fp) or os.path.basename(src).lower() == base or \
+                        (fp and not mod.get("source_fp") and os.path.exists(src) and self.file_fingerprint(src) == fp):
+                    hits.append(("same", prof, mod))
+                elif nid and requires.nexus_id(mod) == nid and self._file_stem(src) == stem:
+                    hits.append(("version", prof, mod))
+        return hits
+
+    def _free_name(self, name):
+        n, i = name, 2
+        while os.path.exists(os.path.join(self.mods_dir, n)):
+            n, i = f"{name} ({i})", i + 1
+        return n
+
     def install(self, archive, name=None, chooser=None, log=_quiet):
-        """Stage a mod (see _install), then say what it needs that isn't installed."""
-        result = self._install(archive, name, chooser, log)
+        """Stage a mod (see _install), then say what it needs that isn't installed.
+
+        If the same file (or another version of it) is already installed, asks first via the chooser:
+        same file -> don't install again (or reinstall / second copy); other version -> update (or keep both)."""
+        self.need()
+        dups = self.find_duplicates(archive)
+        replace = None
+        if dups:
+            kind, prof, old = dups[0]
+            here = prof == self.active
+            where = "" if here else f" in profile '{prof}'"
+            if kind == "same":
+                first = ("Don't install it again", f"It's already installed as '{old['name']}'{where}.") if here else \
+                    ("Add the installed copy to this profile", f"'{old['name']}' is already installed{where}; "
+                     "use the same files here (nothing is installed twice).")
+                opts = [first, ("Replace it (reinstall)", "Install it again over the existing copy, keeping its "
+                                "place in the list, on/off state, notes and tags."),
+                        ("Install a second copy", "Keep both as separate mods.")]
+                title = "This mod is already installed"
+            else:
+                opts = [("Update", f"Replace '{old['name']}'{where} with this version, keeping its place in the "
+                         "list, on/off state, notes and tags."),
+                        ("Keep both", "Install this version as a separate mod."),
+                        ("Cancel", "Don't install it.")]
+                title = "Another version of this mod is installed"
+            group = {"name": title, "type": "SelectExactlyOne", "plugins": [
+                {"name": n, "description": d, "image": None, "type": "Recommended" if i == 0 else "Optional"}
+                for i, (n, d) in enumerate(opts)]}
+            pick = (chooser or (lambda s, g: fomod.default_choice(g)))("Already installed", group)
+            choice = opts[pick[0]][0] if pick else "Cancel"
+            if choice == "Don't install it again" or choice == "Cancel":
+                raise FolmError(f"Not installed: {os.path.basename(archive)} is already installed as "
+                                f"'{old['name']}'{where}." if kind == "same" else "install cancelled")
+            if choice == "Add the installed copy to this profile":
+                if os.path.isdir(os.path.join(self.mods_dir, old["name"])):
+                    entry = {k: v for k, v in old.items()}
+                    entry["enabled"] = True
+                    self.cur["mods"].append(entry)
+                    self.save()
+                    log(f"  added the installed copy '{old['name']}' to this profile")
+                    return old["name"], {"type": old.get("type", "data"), "warnings": [], "reused": True}
+            elif choice in ("Replace it (reinstall)", "Update"):
+                replace = old
+            else:                                             # second copy / keep both
+                name = self._free_name(name or self.guess_name(archive))
+        if replace is None:
+            result = self._install(archive, name, chooser, log)
+        else:
+            result = self._replace(replace, archive, chooser, log)
+        entry = next((x for x in self.cur["mods"] if x["name"] == result[0]), None)
+        if entry is not None:
+            entry["source_fp"] = self.file_fingerprint(archive)
+            self.save()
         try:
             from . import requires
             for r in requires.check(self, only=result[0]):
@@ -212,6 +313,42 @@ class Manager:
                     + requires.describe(r))
         except Exception as e:                       # never let the check spoil an install
             log(f"  (couldn't check its requirements: {e})")
+        return result
+
+    def _replace(self, old, archive, chooser, log):
+        """Install `archive` in place of the staged mod `old` (update / reinstall). The old files are kept
+        aside until the new install has worked; every profile that lists the mod gets the new files."""
+        name = old["name"]
+        dest = os.path.join(self.mods_dir, name)
+        aside = os.path.join(self.dir, f".replacing-{int(time.time())}")
+        if os.path.isdir(dest):
+            os.rename(dest, aside)
+        before = [dict(x) for x in self.cur["mods"]]
+        pos = next((i for i, x in enumerate(self.cur["mods"]) if x["name"] == name), None)
+        if pos is not None:
+            self.cur["mods"].pop(pos)
+        try:
+            result = self._install(archive, name, chooser, log)
+        except Exception:
+            if os.path.isdir(aside):
+                if os.path.isdir(dest):
+                    shutil.rmtree(dest, ignore_errors=True)
+                os.rename(aside, dest)
+            self.cur["mods"][:] = before
+            self.save()
+            raise
+        new = self.cur["mods"].pop(next(i for i, x in enumerate(self.cur["mods"]) if x["name"] == name))
+        for k in ("enabled", "notes", "tags", "category"):
+            if k in old:
+                new[k] = old[k]
+        self.cur["mods"].insert(pos if pos is not None else len(self.cur["mods"]), new)
+        for p in self.data["profiles"].values():          # other profiles listing it: point at the new install
+            for x in p["mods"]:
+                if x is not new and x["name"] == name:
+                    x.update({k: v for k, v in new.items() if k not in ("enabled", "notes", "tags", "category")})
+        self.save()
+        shutil.rmtree(aside, ignore_errors=True)
+        log(f"  replaced '{name}' with {os.path.basename(archive)}")
         return result
 
     def _install(self, archive, name=None, chooser=None, log=_quiet):
@@ -454,7 +591,9 @@ class Manager:
                  f"new mod, '{name}', which you can turn off or remove like any other.\n\n"
                  "If it asks where to put its files, choose drive O: (FOLM output)"
                  + (" as the TTW destination folder" if ttw else "") + ". Your mods are taken out of the game "
-                 "while it runs, so it sees the plain game. No network access."
+                 "while it runs, so it sees the plain game. No network access.\n\n"
+                 "While it works, its window may look blank or frozen: that's normal (it draws again when it's "
+                 "done). FOLM shows its progress in the status bar."
                  + ("\n\nTTW takes a while (about 20 minutes on a fast PC, longer on older ones)." if ttw else "")},
                 {"name": "Cancel", "type": "Optional", "image": None, "description": "Don't run it."}]}
             pick = chooser("Windows installer", confirm)
@@ -482,7 +621,7 @@ class Manager:
             except wintool.ToolError as e:
                 raise FolmError(str(e))
         finally:
-            shutil.rmtree(job, ignore_errors=True)
+            wintool.remove_tree(job)
             if was_deployed:
                 try:
                     self.deploy(log=_quiet)
