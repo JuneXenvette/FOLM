@@ -2,6 +2,8 @@
 
 # FOLM — Fallout Linux Manager
 
+[![Tests](https://github.com/JuneXenvette/FOLM/actions/workflows/tests.yml/badge.svg)](https://github.com/JuneXenvette/FOLM/actions/workflows/tests.yml)
+
 > Unofficial fan-made tool. Not affiliated with or endorsed by Bethesda Softworks, Obsidian Entertainment,
 > Nexus Mods, LOOT or the Tale of Two Wastelands team.
 
@@ -74,7 +76,9 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
 You need Steam with the game installed (run it once to the main menu first), Python 3.10+ and a few
 system tools.
 
-1. **Download FOLM** and unpack it anywhere, for example `~/Apps/FOLM`.
+1. **Download FOLM** from the [Releases page](https://github.com/JuneXenvette/FOLM/releases) (the zip under
+   "Assets", or "Source code (zip)") and unpack it anywhere, for example `~/Apps/FOLM`. Or:
+   `git clone https://github.com/JuneXenvette/FOLM.git`
 2. **Install the system tools.** On Debian / Ubuntu / Mint:
    ```bash
    sudo apt install p7zip-full unrar mono-complete bubblewrap xdotool x11-utils wmctrl python3-venv

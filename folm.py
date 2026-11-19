@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""folm - The FOLM Project command-line mod manager (v0.4).
+"""folm - The FOLM Project command-line mod manager (v1.0).
 
 Setup
   folm.py init                        find the game and its Proton prefix
@@ -447,7 +447,7 @@ def cmd_convert_check(a, m):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="folm.py", description="The FOLM Project mod manager (v0.4)")
+    p = argparse.ArgumentParser(prog="folm.py", description="The FOLM Project mod manager (v1.0)")
     p.add_argument("--edition", default="courier", choices=["courier", "wanderer"])
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("init"); s.add_argument("--game-dir"); s.add_argument("--prefix")
