@@ -69,6 +69,7 @@ Q="$SP/PySide6"
 rm -rf "$Q"/Qt/qml "$Q"/Qt/libexec "$Q"/Qt/metatypes "$Q"/Qt/plugins/{designer,qmltooling,sqldrivers,qmlls} \
        "$Q"/Qt/plugins/wayland-graphics-integration-server "$Q"/Qt/lib/libQt6WaylandEglCompositor* \
        "$Q"/Qt/plugins/platforminputcontexts/libqtvirtualkeyboardplugin.so "$Q"/Qt/plugins/imageformats/libqpdf.so \
+       "$Q"/Qt/plugins/egldeviceintegrations "$Q"/Qt/lib/libQt6EglFs* "$Q"/libpyside6qml* \
        "$Q"/include "$Q"/typesystems "$Q"/glue "$Q"/scripts
 for m in Quick Qml Designer UiTools Help Test Sql QuickControls2 QuickWidgets QuickTest QmlModels \
          QmlWorkerScript QmlCompiler QmlMeta QuickShapes QuickParticles QuickEffects QuickLayouts \
@@ -108,6 +109,11 @@ ln -s folm.png "$APPDIR/.DirIcon"
 
 say "Checking every library is there"
 missing="$(find "$APPDIR/usr" -name '*.so*' -type f -print0 | xargs -0 ldd 2>/dev/null | awk '/not found/ {print $1}' | sort -u)"
+# Qt and PySide must come from the AppImage itself: a PC with its own Qt 6 would otherwise
+# hide a part the AppImage is missing.
+missing="$missing$(find "$APPDIR/usr" -name '*.so*' -type f -print0 | xargs -0 ldd 2>/dev/null |
+          awk -v d="$APPDIR/" '$1 ~ /^lib(Qt6|pyside6|shiboken6)/ && $3 != "" && index($3, d) != 1 {print $1}' | sort -u)"
+missing="$(echo "$missing" | sed '/^$/d' | sort -u)"
 if [ -n "$missing" ]; then
   echo "libraries that are neither in the AppImage nor on this PC:" >&2; echo "$missing" >&2
   for l in $missing; do
