@@ -16,7 +16,7 @@ TOOLS = [
      {"apt": "unrar", "dnf": "unrar", "pacman": "unrar", "zypper": "unrar"}),
     (("mono", "mcs"), "old FOMM script installers (e.g. BOG)", False,
      {"apt": "mono-complete", "dnf": "mono-complete", "pacman": "mono", "zypper": "mono-complete"}),
-    (("bwrap",), "running old FOMM installers in a sandbox", False,
+    (("bwrap",), "running old FOMM installers and Windows installers in a sandbox", False,
      {"apt": "bubblewrap", "dnf": "bubblewrap", "pacman": "bubblewrap", "zypper": "bubblewrap"}),
     (("xdotool", "xprop"), "borderless window and window fixes (X11 only)", False,
      {"apt": "xdotool x11-utils", "dnf": "xdotool xprop", "pacman": "xdotool xorg-xprop",

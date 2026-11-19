@@ -251,6 +251,86 @@ class SetupAndArchives(Temp):
         self.assertTrue(os.path.exists(os.path.join(out, "Data", "Test.esp")))
 
 
+class InstallerKinds(Temp):
+    """BAIN, Windows tools and other games' mods, through the Manager with a fake game."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["FOLM_HOME"] = os.path.join(self.tmp, "home")
+        from folm_core.manager import Manager
+        self.game = os.path.join(self.tmp, "game")
+        os.makedirs(os.path.join(self.game, "Data"))
+        self.m = Manager("wanderer")
+        self.m.init(game_dir=self.game, prefix=os.path.join(self.tmp, "pfx"))
+
+    def tearDown(self):
+        os.environ.pop("FOLM_HOME", None)
+        super().tearDown()
+
+    def zip(self, name, files):
+        z = os.path.join(self.tmp, name)
+        with zipfile.ZipFile(z, "w") as zf:
+            for rel, data in files.items():
+                zf.writestr(rel, data)
+        return z
+
+    @unittest.skipUnless(shutil.which("7z"), "7z not installed")
+    def test_detect_kinds(self):
+        from folm_core import detect
+        self.assertEqual(detect.detect(self.zip("t.zip", {"Patcher.exe": "MZ", "patch/a.xd3": "x"}))["type"],
+                         "exe-installer")
+        bain = self.zip("b.zip", {"00 Core/A.esp": "a", "10 Extra/B.esp": "b"})
+        self.assertEqual(detect.detect(bain)["type"], "bain")
+
+    @unittest.skipUnless(shutil.which("7z"), "7z not installed")
+    def test_bain_install_order(self):
+        z = self.zip("Bain-1-0.zip", {"00 Core/Core.esp": "core", "10 A/Opt.esp": "A",
+                                      "20 B/Data/Opt.esp": "B", "20 B/Data/Textures/x.dds": "t",
+                                      "00 Core/textures/y.dds": "t"})
+        name, _ = self.m.install(z, "Bain", chooser=fomod.replay_chooser({"BAIN/Packages": ["00 Core", "10 A", "20 B"]}))
+        d = os.path.join(self.m.mods_dir, name)
+        with open(os.path.join(d, "Opt.esp")) as fh:
+            self.assertEqual(fh.read(), "B")                              # later package wins
+        self.assertEqual(len([x for x in os.listdir(d) if x.lower() == "textures"]), 1)   # case twins merged
+        self.assertEqual(self.m.mod(name)["bain_choices"], {"BAIN/Packages": ["00 Core", "10 A", "20 B"]})
+
+    @unittest.skipUnless(shutil.which("7z"), "7z not installed")
+    def test_other_game_refused(self):
+        from folm_core.manager import FolmError
+        z = self.zip("starfield.zip", {"SFSE/Plugins/thing.toml": "x", "readme.txt": "for Starfield"})
+        with self.assertRaises(FolmError) as e:
+            self.m.install(z, "SF")
+        self.assertIn("another game", str(e.exception))
+
+    def test_collect_tool_output(self):
+        from folm_core import wintool
+        self.write("game/Fallout3.exe", b"vanilla")
+        self.write("game/Data/Same.esm", b"same")
+        up = os.path.join(self.tmp, "job", "upper")
+        self.write("job/upper/Fallout3.exe", b"patched")                   # changed game exe -> game-root file
+        self.write("job/upper/Data/Same.esm", b"same")                     # rewritten unchanged -> skipped
+        self.write("job/upper/Data/New.esp", b"new")
+        self.write("job/upper/Patcher.exe", b"tool")                       # the tool itself -> skipped
+        self.write("job/upper/patch.log", b"log")                          # its log -> skipped
+        self.write("job/output/Extra.esp", b"out")                         # drive O: -> data
+        dest = os.path.join(self.tmp, "mod")
+        res = wintool.collect({"upper": up, "output": os.path.join(self.tmp, "job", "output"),
+                               "tool_files": {"Patcher.exe"}}, self.game, dest)
+        got = sorted(os.path.relpath(os.path.join(dp, f), dest) for dp, _, fn in os.walk(dest) for f in fn)
+        self.assertEqual(got, sorted(["New.esp", "Extra.esp", os.path.join(deploy.ROOT_DIR, "Fallout3.exe")]))
+        self.assertEqual(res["unchanged"], 1)
+
+    def test_exe_choice(self):
+        from folm_core import wintool
+        for f in ("Setup.exe", "unins000.exe", "tools/xdelta3.exe", "vcredist_x86.exe", "Readme.exe"):
+            self.write("tool/" + f, b"MZ")
+        exes = [os.path.relpath(e, os.path.join(self.tmp, "tool")) for e in wintool.find_exes(os.path.join(self.tmp, "tool"))]
+        self.assertEqual(exes, ["Setup.exe", "Readme.exe"])
+        self.assertTrue(wintool.runs_in_game_folder("/x/Patcher.exe", "exe-installer"))
+        self.assertFalse(wintool.runs_in_game_folder("/x/TTW Install.exe", "ttw-installer"))
+        self.assertFalse(wintool.runs_in_game_folder("/x/ESM Patcher.exe", "exe-installer"))
+
+
 class CommandLine(unittest.TestCase):
     def test_help_runs(self):
         here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")

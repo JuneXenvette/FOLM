@@ -806,7 +806,7 @@ class Main(QMainWindow):
     # ---------------------------------------------------------------- install + library
     def pick_install(self):
         f, _ = QFileDialog.getOpenFileName(self, "Install a mod", os.path.expanduser("~"),
-                                           "Mod files (*.7z *.zip *.rar);;All files (*)")
+                                           "Mod files (*.7z *.zip *.rar *.fomod *.exe);;All files (*)")
         if f:
             self.install(f)
 
@@ -875,7 +875,7 @@ class Main(QMainWindow):
     def dropEvent(self, e):
         for url in e.mimeData().urls():
             p = url.toLocalFile()
-            if p.lower().endswith((".7z", ".zip", ".rar")):
+            if p.lower().endswith((".7z", ".zip", ".rar", ".fomod", ".exe")):
                 self.install(p)
                 break
 

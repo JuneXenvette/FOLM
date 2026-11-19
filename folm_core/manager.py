@@ -187,7 +187,7 @@ class Manager:
     # ------------------------------------------------------------ mods
     @staticmethod
     def guess_name(archive):
-        return re.sub(r"(-\d+)+.*$|\.(7z|zip|rar)$", "", os.path.basename(archive)).strip() or "mod"
+        return re.sub(r"(-\d+)+.*$|\.(7z|zip|rar|fomod|exe)$", "", os.path.basename(archive)).strip() or "mod"
 
     def fomod_context(self):
         """What a FOMOD may check: files already in the game + in enabled mods, and active plugins."""
@@ -221,7 +221,11 @@ class Manager:
         the installer's defaults (required + recommended options) are used.
         """
         self.need()
-        r = detect.detect(archive)
+        try:
+            r = detect.detect(archive)
+        except ValueError:
+            raise FolmError(f"{os.path.basename(archive)} isn't a mod archive FOLM can open "
+                            "(mods come as .7z, .zip, .rar, .fomod or .exe files).")
         name = name or self.guess_name(archive)
         if r["type"] == "fomod-xml":
             return self._install_fomod(archive, name, r, chooser or (lambda s, g: fomod.default_choice(g)), log)
@@ -242,8 +246,16 @@ class Manager:
         if r["type"] == "source":
             raise FolmError(f"{os.path.basename(archive)} is the mod's source code (for programmers), not something "
                             "to install. Download the mod's main file instead.")
+        if r["type"] in ("exe-installer", "ttw-installer"):
+            return self._install_wintool(archive, name, r, chooser or (lambda s, g: fomod.default_choice(g)), log)
+        if r["type"] == "bain":
+            return self._install_bain(archive, name, r, chooser or (lambda s, g: fomod.default_choice(g)), log)
+        if r["type"] == "unknown":
+            raise FolmError(f"{os.path.basename(archive)} doesn't look like a {game_info(self.edition)['game']} mod: "
+                            "no plugins, game folders, installer or script extender files in it. "
+                            "Is it for another game?")
         if r["type"] not in ("data", "data+game-root", "game-root"):
-            raise FolmError(f"FOLM can't install '{r['type']}' mods yet.")
+            raise FolmError(f"FOLM doesn't recognise this kind of mod ({r['type']}).")
         dest = os.path.join(self.mods_dir, name)
         if os.path.exists(dest):
             raise FolmError(f"A mod called {name!r} is already staged.")
@@ -337,6 +349,155 @@ class Manager:
         self.cur["mods"].append({"name": name, "enabled": True, "type": "fomod-csharp",
                                  "source": os.path.abspath(archive), "notes": "", "tags": [],
                                  "legacy_requests": requests})
+        self.save()
+        return name, r
+
+    def _install_bain(self, archive, name, r, chooser, log):
+        """BAIN package: numbered option folders ("00 Core", "10 Option"). Picked ones are merged in order."""
+        from . import nvcase
+        dest = os.path.join(self.mods_dir, name)
+        if os.path.exists(dest):
+            raise FolmError(f"A mod called {name!r} is already staged.")
+        opts = r["options"]
+        core = [o for o in opts if re.match(r"^0+\s", o) or re.search(r"\b(core|main|required|base)\b", o, re.I)]
+        group = {"name": "Packages", "type": "SelectAny", "plugins": [
+            {"name": o, "description": "Core files: install these." if o in core else "Optional package.",
+             "image": None, "type": "Recommended" if o in (core or opts[:1]) else "Optional"} for o in opts]}
+        picked = chooser("BAIN", group)
+        if picked is None:
+            raise FolmError("install cancelled")
+        picked = sorted(set(picked))
+        if not picked:
+            raise FolmError("no packages chosen")
+        names = [opts[i] for i in picked]
+        with tempfile.TemporaryDirectory(dir=self.dir) as tmp:
+            try:
+                archive_mod.extract(archive, tmp)
+            except archive_mod.ArchiveError as e:
+                raise FolmError(str(e))
+            root = os.path.join(tmp, r["data_root"]) if r["data_root"] else tmp
+            os.makedirs(dest)
+            for o in names:                                   # in number order: later packages win
+                src = os.path.join(root, o)
+                kids = {k.lower(): k for k in os.listdir(src)}
+                if "data" in kids and os.path.isdir(os.path.join(src, kids["data"])):
+                    src = os.path.join(src, kids["data"])     # a package that mirrors the game folder
+                shutil.copytree(src, dest, dirs_exist_ok=True)
+        tidy = nvcase.Fixer(lowercase=False)
+        tidy.fix_dir(dest)
+        log(f"  BAIN: installed {', '.join(names)}")
+        self.cur["mods"].append({"name": name, "enabled": True, "type": "bain",
+                                 "source": os.path.abspath(archive), "notes": "", "tags": [],
+                                 "bain_choices": {"BAIN/Packages": names}})
+        self.save()
+        return name, r
+
+    def other_game_dirs(self):
+        """The other Fallout game's folder, if installed (TTW's installer needs both)."""
+        out = {}
+        for ed in EDITIONS:
+            if ed == self.edition:
+                continue
+            for lib in steam_libraries():
+                cand = os.path.join(lib, "common", game_info(ed)["install_dir"])
+                if os.path.isdir(cand):
+                    out[ed] = cand
+                    break
+        return out
+
+    def _install_wintool(self, archive, name, r, chooser, log):
+        """A Windows installer or patcher: run it like on Windows (folm_core/wintool.py); its output is the mod."""
+        from . import wintool, wineprefix
+        dest = os.path.join(self.mods_dir, name)
+        if os.path.exists(dest):
+            raise FolmError(f"A mod called {name!r} is already staged.")
+        why = wintool.available()
+        if why:
+            raise FolmError(why)
+        if wineprefix.prefix_busy(self.data["prefix"]):
+            raise FolmError("Close the game first: FOLM takes your mods out of the game while the installer runs.")
+        work = os.path.join(home(), "work")
+        os.makedirs(work, exist_ok=True)
+        job = tempfile.mkdtemp(prefix="tool-", dir=work)
+        was_deployed = self.deployed
+        try:
+            tool = os.path.join(job, "tool")
+            os.makedirs(tool)
+            if archive.lower().endswith(".exe"):
+                shutil.copy2(archive, tool)
+            else:
+                try:
+                    archive_mod.extract(archive, tool)
+                except archive_mod.ArchiveError as e:
+                    raise FolmError(str(e))
+            exes = wintool.find_exes(tool)
+            if not exes:
+                raise FolmError("there's no installer .exe in this download")
+            if len(exes) > 1:
+                group = {"name": "Which program runs the install?", "type": "SelectExactlyOne", "plugins": [
+                    {"name": os.path.relpath(e, tool), "description": "", "image": None,
+                     "type": "Recommended" if i == 0 else "Optional"} for i, e in enumerate(exes)]}
+                pick = chooser("Installer", group)
+                if not pick:
+                    raise FolmError("install cancelled")
+                exe = exes[pick[0]]
+            else:
+                exe = exes[0]
+            ttw = r["type"] == "ttw-installer"
+            in_game = wintool.runs_in_game_folder(exe, r["type"])
+            what = ("It runs from your game folder, as its instructions say." if in_game else
+                    "It sees your game where Windows would.")
+            confirm = {"name": f"Run {os.path.basename(exe)}?", "type": "SelectExactlyOne", "plugins": [
+                {"name": "Run it", "type": "Recommended", "image": None, "description":
+                 f"FOLM runs {os.path.basename(exe)} with Wine, like on Windows. {what}\n\n"
+                 "Your real game folder is protected: whatever the program changes or adds is collected into a "
+                 f"new mod, '{name}', which you can turn off or remove like any other.\n\n"
+                 "If it asks where to put its files, choose drive O: (FOLM output)"
+                 + (" as the TTW destination folder" if ttw else "") + ". Your mods are taken out of the game "
+                 "while it runs, so it sees the plain game. No network access."
+                 + ("\n\nTTW takes a while (about 20 minutes on a fast PC, longer on older ones)." if ttw else "")},
+                {"name": "Cancel", "type": "Optional", "image": None, "description": "Don't run it."}]}
+            pick = chooser("Windows installer", confirm)
+            if pick != [0]:
+                raise FolmError("install cancelled")
+            try:
+                wine, proton = wintool.find_wine([STEAM, os.path.expanduser("~/.steam/steam")], steam_libraries())
+            except wintool.ToolError as e:
+                raise FolmError(str(e))
+            if was_deployed:
+                log("  taking your mods out of the game while it runs")
+                self.undeploy(log=_quiet)
+            game_dir = self.data["game_dir"]
+            others = self.other_game_dirs()
+            reg = {"HKLM\\Software\\Bethesda Softworks\\" + ("FalloutNV" if self.edition == "courier" else "Fallout3"):
+                   game_dir}
+            for ed, d in others.items():
+                reg["HKLM\\Software\\Bethesda Softworks\\" + ("FalloutNV" if ed == "courier" else "Fallout3")] = d
+            try:
+                cap = wintool.run(exe, tool, job, game_dir, list(others.values()),
+                                  os.path.join(home(), "prefixes", "installer", "pfx"), wine, proton,
+                                  args=["-NoOggEnc2"] if ttw else [], in_game_folder=in_game, registry=reg, log=log)
+                os.makedirs(dest)
+                res = wintool.collect(cap, game_dir, dest, log=log)
+            except wintool.ToolError as e:
+                raise FolmError(str(e))
+        finally:
+            shutil.rmtree(job, ignore_errors=True)
+            if was_deployed:
+                try:
+                    self.deploy(log=_quiet)
+                except Exception as e:
+                    log(f"  ! couldn't put your mods back in the game ({e}); press Deploy")
+        if not res["files"]:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise FolmError(f"{os.path.basename(exe)} finished without changing or adding any files "
+                            "(cancelled, or it saved somewhere other than the game folder or drive O:).")
+        log(f"  collected {res['files']} file(s) the installer made into '{name}'"
+            + (f"; it also deleted {len(res['deleted'])} game file(s), which FOLM leaves in place" if res["deleted"]
+               else ""))
+        self.cur["mods"].append({"name": name, "enabled": True, "type": "windows-installer",
+                                 "source": os.path.abspath(archive), "notes": "", "tags": [],
+                                 "ran": os.path.basename(exe), "deleted_by_installer": res["deleted"]})
         self.save()
         return name, r
 
@@ -1062,10 +1223,11 @@ class Manager:
             runner()
         else:
             g = self.data["game_dir"]
-            proton = sorted(glob.glob(os.path.join(STEAM, "compatibilitytools.d", "*", "files", "bin", "wine")))
-            wine = proton[0] if proton else shutil.which("wine")
-            if not wine:
-                raise FolmError("couldn't find Proton's wine to run GECK")
+            from . import wintool
+            try:
+                wine, _ = wintool.find_wine([STEAM, os.path.expanduser("~/.steam/steam")], steam_libraries())
+            except wintool.ToolError as e:
+                raise FolmError(f"to run GECK, {e}")
             loader = os.path.join(g, "nvse_loader.exe")
             cmd = [wine, "nvse_loader.exe", "-editor"] if os.path.exists(loader) else [wine, os.path.basename(exe)]
             env = dict(os.environ, WINEPREFIX=os.path.join(self.data["prefix"], "pfx"), WINEDEBUG="-all")

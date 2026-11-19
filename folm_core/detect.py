@@ -196,6 +196,12 @@ def classify(files, dirs, source_name=""):
         dk = children(files, dirs, r["data_root"])
         r["plugins"] = sorted(v for k, v in dk.items() if k.endswith(PLUGIN_EXTS))
 
+    # An installer or patcher program with its files (e.g. Patcher.exe + patch data, BSA Decompressor)
+    if r["type"] == "unknown" and any(f.endswith(".exe") for f in low_files):
+        r["type"] = "exe-installer"
+        r["notes"] = "Windows installer/patcher: FOLM runs it with Wine and turns its output into a mod"
+        return r
+
     for group in case_collisions(files, dirs):
         r["warnings"].append("case collision: " + "  vs  ".join(group))
     if r["type"] == "unknown":

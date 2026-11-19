@@ -24,14 +24,20 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
 | ✅ Tested | Linux Mint 22 (Cinnamon, X11), Steam + Proton 10 / GE-Proton, New Vegas + TTW 3.4, AMD GPU (RADV) |
 | ❓ Not tested | Wayland, other distros (should work), NVIDIA, Steam Deck, Flatpak Steam |
 | ⚠️ Barely tested | **Wanderer edition (Fallout 3 on its own)**: it shares the engine, but hasn't had a full playthrough |
-| ❌ Not supported yet | BAIN installers, mods that come as Windows `.exe` installers, Nexus Collections, update checks, the FO3 → NV converter (only its check report works) |
+| ❌ Not supported yet | BAIN wizard scripts (`wizard.txt`; plain BAIN packages work), Nexus Collections, update checks, the FO3 → NV converter (only its check report works) |
 
 ## What it does
 
 - **Installs mods of every common kind:** plain archives (.7z/.zip/.rar), **FOMOD** wizards (its own
   native installer, with descriptions and images), **old FOMM script installers** (C# installers like BOG
   and Project Nevada, which most Linux setups can't run; FOLM runs them in a sandbox), mods inside archives
-  inside archives, and script extender plugins that go next to the game's exe.
+  inside archives, **BAIN** packages (numbered option folders, picked with tick boxes), and script extender
+  plugins that go next to the game's exe.
+- **Windows installers and patchers (.exe) run like on Windows:** Tale of Two Wastelands' installer,
+  FNV BSA Decompressor, Ultimate Edition ESM Fixes, the Fallout 3 Anniversary Patcher, the FO3 ESM Patcher
+  and the like. FOLM runs them with Proton's Wine in a sandbox, with your game folder protected
+  (copy-on-write): whatever the program changes or creates becomes a normal mod you can turn off.
+  [How it works](docs/windows-installers.md).
 - **Nexus "Mod Manager Download" button:** click it on Nexus and FOLM downloads and installs the mod
   (works with free accounts; you use your own API key).
 - **Deploys without a virtual file system:** mods are hard-linked into the game folder (no extra disk space,
@@ -48,9 +54,10 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
   an FPS cap in `dxvk.conf`, borderless window, read-only INIs kept read-only, archive invalidation.
 - **Crash reports:** when the game crashes, FOLM gathers the logs, mod list and system info into one
   report with a plain-language diagnosis. Local only, personal paths removed.
-- **TTW support (optional):** recognises TTW and its archive, sorts it in TTW's official order, and can build a
-  Readius patch for TTW 3 from your own copy of Readius. TTW itself is installed with the TTW team's own
-  installer from their official page; FOLM never bundles it.
+- **TTW support (optional):** download TTW from its official page and install it in FOLM like any mod: FOLM
+  runs TTW's own installer (with the Linux speed fix `-NoOggEnc2`), and the result becomes a mod sorted in TTW's
+  official order. FOLM can also build a Readius patch for TTW 3 from your own copy of Readius. FOLM never
+  bundles or re-hosts TTW.
 - **GECK under Proton** for mod makers: opens with your mods loaded and turns what you save into a mod.
 
 ## Install
@@ -106,7 +113,9 @@ mod file → DETECT its type → INSTALL into its own staging folder (case-fixed
 | FOMOD/FOMM with C# script | Compiled with Mono against FOLM's FOMM shim, run sandboxed with bubblewrap; the mod's own window appears ([details](docs/legacy-installers.md)) |
 | Root-level files (script extender, DLLs, DXVK builds) | Placed next to the game's exe |
 | Archive inside an archive | Unpacked and installed |
-| BAIN, `.exe` installers | Not yet: FOLM says so instead of guessing |
+| BAIN (numbered option folders) | Packages shown as tick boxes; "00"/core packages ticked by default; later packages win |
+| Windows `.exe` installer or patcher | Run with Proton's Wine, sandboxed, game folder copy-on-write; what it changed or saved to drive O: becomes the mod ([details](docs/windows-installers.md)) |
+| Anything else | FOLM refuses only files that aren't for this game (e.g. a Starfield mod), and says why |
 
 ## Making mods
 
