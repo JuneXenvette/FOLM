@@ -258,6 +258,12 @@ class Manager:
         If the same file (or another version of it) is already installed, asks first via the chooser:
         same file -> don't install again (or reinstall / second copy); other version -> update (or keep both)."""
         self.need()
+        try:
+            r = detect.detect(archive)
+        except (ValueError, OSError):
+            r = {}
+        if r.get("type") == "tool":
+            return self.install_tool(archive, r["tool"], log)
         dups = self.find_duplicates(archive)
         replace = None
         if dups:
@@ -1111,7 +1117,8 @@ class Manager:
                 # mod's own copy, and writing to it would change the mod. Moving keeps the link intact for restore.
                 bak = os.path.join(self.dir, "backups", "dxvk.conf.folm-backup")
                 os.makedirs(os.path.dirname(bak), exist_ok=True)
-                lines = [l for l in open(conf).read().splitlines() if not l.strip().startswith("d3d9.maxFrameRate")]
+                with open(conf) as fh:
+                    lines = [l for l in fh.read().splitlines() if not l.strip().startswith("d3d9.maxFrameRate")]
                 if os.path.exists(bak):
                     os.remove(bak)
                 shutil.move(conf, bak)
@@ -1207,7 +1214,16 @@ class Manager:
         self.need()
         if not self.deployed:
             raise FolmError("Nothing is deployed, so there's nothing to catch.")
-        return dep.catch(self.manifest, self.overwrite_dir, log)
+        return self._catch_into(self.overwrite_dir, log)
+
+    def _catch_into(self, target, log=_quiet):
+        """Collect stray game-folder files into `target`, leaving FOLM's own settings files (dxvk.conf
+        for the FPS cap) out of it: they're undone first and written again afterwards."""
+        self._game_settings(apply=False)
+        try:
+            return dep.catch(self.manifest, target, log)
+        finally:
+            self._game_settings(apply=True)
 
     def plugin_order(self):
         """[(name, active, load_index_or_None)], problems."""
@@ -1316,10 +1332,12 @@ class Manager:
     # ------------------------------------------------------------ GECK (mod making)
     GECK_SETTINGS = {"General": {"bAllowMultipleMasterLoads": "1", "bUseMultibounds": "0"}}
 
+    GECK_EXES = ("geck.exe", "fallout3 - garden of eden creation kit.exe")
+
     def geck_path(self):
         g = self.data["game_dir"]
-        for f in os.listdir(g):
-            if f.lower() == "geck.exe":
+        for f in sorted(os.listdir(g)):
+            if f.lower() in self.GECK_EXES:
                 return os.path.join(g, f)
         return None
 
@@ -1373,10 +1391,11 @@ class Manager:
             log("Opening GECK (close it when you're done; FOLM will collect what you saved)...")
             subprocess.Popen(cmd, cwd=g, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).wait()
             time.sleep(3)
-            while subprocess.run(["pgrep", "-fi", "[g]eck.exe"], capture_output=True).returncode == 0:
+            while subprocess.run(["pgrep", "-fi", "[g]eck.exe|[g]arden of eden creation kit.exe"],
+                                 capture_output=True).returncode == 0:
                 time.sleep(2)                       # nvse_loader returns early; wait for GECK itself
         target = os.path.join(self.mods_dir, edit_mod) if edit_mod else self.overwrite_dir
-        dep.catch(self.manifest, target, log)
+        self._catch_into(target, log)
         if edit_mod:
             got = sorted(dep.walk_rel(target))
             log(f"Changes saved into {edit_mod!r}. Deploy to put them in the game.")
@@ -1403,6 +1422,121 @@ class Manager:
         if was:
             self.deploy()
         return name
+
+    # ------------------------------------------------------------ Tools tab (xEdit, xLODGen)
+    def tools_status(self):
+        """Every tool in the catalog with whether it's installed here: [{id, name, what, how, get, exe}]."""
+        from . import tools
+        out = []
+        for t in tools.CATALOG:
+            if t["id"] == "geck":
+                exe = self.geck_path() if self.data.get("game_dir") and os.path.isdir(self.data["game_dir"]) else None
+            else:
+                exe = tools.find_exe(tools.tools_dir(home(), t["id"]), t["id"], self.edition)
+            out.append({"id": t["id"], "name": t["names"][self.edition], "what": t["what"], "how": t["how"],
+                        "get": t["get"][self.edition], "exe": exe})
+        return out
+
+    def install_tool(self, archive, tool_id, log=_quiet):
+        """Unpack a tool download into FOLM's tools folder (replacing an older copy). Not deployed."""
+        from . import tools
+        dest = tools.tools_dir(home(), tool_id)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        tmp = tempfile.mkdtemp(prefix=f".{tool_id}-", dir=os.path.dirname(dest))
+        try:
+            if archive.lower().endswith(".exe"):
+                shutil.copy2(archive, os.path.join(tmp, os.path.basename(archive)))
+            else:
+                archive_mod.extract(archive, tmp)
+            if not tools.find_exe(tmp, tool_id, self.edition):
+                raise FolmError(f"{os.path.basename(archive)} doesn't contain the tool's program")
+            keep = os.path.join(dest, "FOLM backups")          # xEdit backups survive an update
+            if os.path.isdir(keep):
+                shutil.move(keep, os.path.join(tmp, "FOLM backups"))
+            if os.path.isdir(dest):
+                shutil.rmtree(dest)
+            os.rename(tmp, dest)
+        except archive_mod.ArchiveError as e:
+            raise FolmError(str(e))
+        finally:
+            if os.path.isdir(tmp):
+                shutil.rmtree(tmp, ignore_errors=True)
+        name = tools.BY_ID[tool_id]["names"][self.edition]
+        log(f"Installed the tool {name}. Open it from the Tools tab.")
+        return name, {"type": "tool", "tool": tool_id, "warnings": []}
+
+    def run_tool(self, tool_id, log=_quiet, runner=None):
+        """Run xEdit or xLODGen on this profile's mods (deployed first). What it saves becomes a mod:
+        "xEdit output" / "Generated LOD" (made, or added to, and enabled). Returns that mod's name or None."""
+        from . import tools, wintool
+        self.need()
+        if tool_id == "geck":
+            return self.geck(log=log, runner=runner)
+        info = next(t for t in self.tools_status() if t["id"] == tool_id)
+        exe = info["exe"]
+        if not exe and runner is None:
+            raise FolmError(f"{info['name']} isn't installed. {tools.BY_ID[tool_id]['how']} ({info['get']})")
+        if not self.deployed:
+            self.deploy(log)
+        mod_name = tools.OUTPUT_MOD[tool_id]
+        target = os.path.join(self.mods_dir, mod_name)
+        os.makedirs(os.path.join(home(), "tools"), exist_ok=True)
+        work = tempfile.mkdtemp(prefix=f".run-{tool_id}-", dir=os.path.join(home(), "tools"))
+        out = os.path.join(work, "output")
+        os.makedirs(out)
+        try:
+            if runner:
+                runner(out)
+            else:
+                try:
+                    wine, _ = wintool.find_wine([STEAM, os.path.expanduser("~/.steam/steam")], steam_libraries())
+                except wintool.ToolError as e:
+                    raise FolmError(f"to run {info['name']}, {e}")
+                cmd = [wine, os.path.basename(exe)] + tools.args_for(tool_id, self.edition, self.data_dir, out)
+                env = dict(os.environ, WINEPREFIX=os.path.join(self.data["prefix"], "pfx"), WINEDEBUG="-all")
+                log(f"Opening {info['name']} (close it when you're done; FOLM collects what it saved)...")
+                subprocess.Popen(cmd, cwd=os.path.dirname(exe), env=env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).wait()
+                b = os.path.basename(exe)
+                while subprocess.run(["pgrep", "-fi", f"[{b[0]}]{re.escape(b[1:])}"],
+                                     capture_output=True).returncode == 0:
+                    time.sleep(2)
+            # xEdit's backups and cache go with the tool, not into a mod
+            keep = os.path.join(tools.tools_dir(home(), tool_id), "FOLM backups", self.edition)
+            if os.path.isdir(self.data_dir):
+                for d in os.listdir(self.data_dir):
+                    if tools.is_tool_clutter(d) and os.path.isdir(os.path.join(self.data_dir, d)):
+                        dest = os.path.join(keep, d)
+                        os.makedirs(dest, exist_ok=True)
+                        for rel in dep.walk_rel(os.path.join(self.data_dir, d)):
+                            os.makedirs(os.path.dirname(os.path.join(dest, rel)), exist_ok=True)
+                            shutil.move(os.path.join(self.data_dir, d, rel), os.path.join(dest, rel))
+                        shutil.rmtree(os.path.join(self.data_dir, d), ignore_errors=True)
+            got = self._catch_into(target, log)
+            for rel in dep.walk_rel(out):
+                d = os.path.join(target, rel)
+                os.makedirs(os.path.dirname(d), exist_ok=True)
+                if os.path.lexists(d):
+                    os.remove(d)
+                shutil.move(os.path.join(out, rel), d)
+                got += 1
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        if not os.path.isdir(target) or not os.listdir(target):
+            if os.path.isdir(target):
+                os.rmdir(target)
+            log(f"{info['name']} closed: nothing was saved.")
+            return None
+        entry = next((x for x in self.cur["mods"] if x["name"] == mod_name), None)
+        if entry is None:
+            self.cur["mods"].append({"name": mod_name, "enabled": True, "type": "folder", "tags": ["ours"],
+                                     "notes": f"Made by {info['name']} in FOLM.", "category": "Our mods"})
+        else:
+            entry["enabled"] = True
+        self.save()
+        self.deploy(log)
+        log(f"{info['name']} closed: {got} file(s) saved into the mod {mod_name!r} (enabled and deployed).")
+        return mod_name
 
     def latest_session(self):
         d = os.path.join(self.dir, "sessions")

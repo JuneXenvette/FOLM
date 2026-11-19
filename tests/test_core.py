@@ -285,6 +285,40 @@ class InstallerKinds(Temp):
         self.assertEqual(detect.detect(bain)["type"], "bain")
 
     @unittest.skipUnless(shutil.which("7z"), "7z not installed")
+    def test_tools_tab(self):
+        from folm_core import detect, tools
+        st = {t["id"]: t for t in self.m.tools_status()}
+        self.assertEqual(set(st), {"geck", "xedit", "xlodgen"})
+        self.assertFalse(any(t["exe"] for t in st.values()))                       # all greyed out
+        geck = os.path.join(self.game, "Fallout3 - Garden of Eden Creation Kit.exe")
+        open(geck, "w").close()
+        self.assertTrue(self.m.tools_status()[0]["exe"])                            # FO3's GECK name
+        os.remove(geck)                                                             # (not part of the fake game)
+        z = self.zip("xEdit 4.1.5-164-4-1-5.7z.zip", {"xEdit/xEdit.exe": "MZ", "xEdit/FO3Edit.exe": "MZ",
+                                                      "xEdit/Edit Scripts/a.pas": "x"})
+        self.assertEqual(detect.detect(z)["type"], "tool")
+        name, r = self.m.install(z, "ignored")
+        self.assertEqual(r["type"], "tool")
+        exe = {t["id"]: t for t in self.m.tools_status()}["xedit"]["exe"]
+        self.assertEqual(os.path.basename(exe), "FO3Edit.exe")                      # this game's own name first
+        self.assertEqual(self.m.mods(), [])                                         # not a mod
+        self.assertEqual(tools.args_for("xedit", "wanderer", "/g/Data")[0], "-fo3")
+        self.assertEqual(tools.args_for("xlodgen", "courier", "/g/Data", "/o")[2], "-o:Z:\\o\\")
+
+        def fake_xedit(out):                                                        # saves a plugin + a backup
+            with open(os.path.join(self.game, "Data", "Fixed.esp"), "w") as fh:
+                fh.write("fixed")
+            os.makedirs(os.path.join(self.game, "Data", "FO3Edit Backups"))
+            open(os.path.join(self.game, "Data", "FO3Edit Backups", "Fixed.esp.bak"), "w").close()
+        got = self.m.run_tool("xedit", runner=fake_xedit)
+        self.assertEqual(got, "xEdit output")
+        d = os.path.join(self.m.mods_dir, got)
+        self.assertEqual(sorted(os.listdir(d)), ["Fixed.esp"])                      # backups kept aside
+        self.assertTrue(self.m.mod(got)["enabled"])
+        self.assertTrue(os.path.exists(os.path.join(tools.tools_dir(os.environ["FOLM_HOME"], "xedit"),
+                                                    "FOLM backups", "wanderer", "FO3Edit Backups", "Fixed.esp.bak")))
+
+    @unittest.skipUnless(shutil.which("7z"), "7z not installed")
     def test_bain_install_order(self):
         z = self.zip("Bain-1-0.zip", {"00 Core/Core.esp": "core", "10 A/Opt.esp": "A",
                                       "20 B/Data/Opt.esp": "B", "20 B/Data/Textures/x.dds": "t",

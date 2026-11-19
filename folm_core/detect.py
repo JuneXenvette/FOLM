@@ -127,6 +127,14 @@ def classify(files, dirs, source_name=""):
          "options": [], "warnings": [], "files": len(files)}
     low_files = [f.lower() for f in files]
 
+    # Modding tools (xEdit, xLODGen): kept in FOLM's tools folder, not installed into the game
+    from .tools import tool_for_files, BY_ID
+    tool = tool_for_files(list(files) + [source_name])
+    if tool:
+        r.update(type="tool", tool=tool, notes=f"modding tool ({BY_ID[tool]['names']['courier'].split(' ')[0]}): "
+                 "goes to the Tools tab")
+        return r
+
     # Whole-file installers
     if source_name.lower().endswith(".exe"):
         r["type"] = "exe-installer"

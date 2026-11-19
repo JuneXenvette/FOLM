@@ -364,6 +364,7 @@ class Main(QMainWindow):
         self.tabs.addTab(ow, "Overwrite")
         self.tabs.addTab(self._library_tab(), "Library")
         self.tabs.addTab(self._notes_tab(), "Notes")
+        self.tabs.addTab(self._tools_tab(), "Tools")
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setFont(QFont("monospace"))
@@ -396,6 +397,51 @@ class Main(QMainWindow):
         v.addWidget(self.lib)
         v.addWidget(QLabel("Double-click a mod file to install it."))
         return w
+
+    def _tools_tab(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.addWidget(QLabel("<b>Modding tools</b> — installed ones open with your mods loaded. "
+                           "To add one, download it and drop the file on this window."))
+        self.tools_box = QVBoxLayout()
+        v.addLayout(self.tools_box)
+        self.tools_tab = w
+        v.addStretch(1)
+        return w
+
+    def refresh_tools(self):
+        while self.tools_box.count():
+            item = self.tools_box.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        try:
+            status = self.m.tools_status() if self.m.ready else []
+        except Exception:
+            status = []
+        for t in status:
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(4, 6, 4, 6)
+            have = bool(t["exe"])
+            text = QLabel(f"<b>{t['name']}</b> — {'✅ installed' if have else 'not installed'}<br>"
+                          f"<small>{t['what']}" + ("" if have else f" {t['how']}") + "</small>")
+            text.setWordWrap(True)
+            text.setEnabled(have)                        # greyed out when it isn't installed
+            if have:
+                text.setToolTip(t["exe"])
+            h.addWidget(text, 1)
+            if have:
+                b = QPushButton("Open")
+                b.clicked.connect(self.open_geck if t["id"] == "geck" else (lambda _=False, i=t["id"]: self.open_tool(i)))
+            else:
+                b = QPushButton("Get it…")
+                b.clicked.connect(lambda _=False, u=t["get"]: QDesktopServices.openUrl(QUrl(u)))
+            h.addWidget(b)
+            self.tools_box.addWidget(row)
+
+    def open_tool(self, tool_id):
+        self.run(self.m.run_tool, tool_id,
+                 then=lambda r: (self.say(f"Saved into the mod {r!r}." if r else "Nothing was saved."), self.refresh()))
 
     def _notes_tab(self):
         w = QWidget()
@@ -450,6 +496,7 @@ class Main(QMainWindow):
         self.ow_list.clear()
         self.lib_folders.clear()
         ready = m.ready
+        self.refresh_tools()
         for w in (self.btn_deploy, self.btn_undeploy, self.profile):
             w.setEnabled(ready)
         self.btn_play.setEnabled(True)                      # not set up yet: Play offers the setup
@@ -815,10 +862,26 @@ class Main(QMainWindow):
     def install(self, path):
         if not path:
             return
+        from folm_core import detect
+        try:
+            is_tool = detect.detect(path).get("type") == "tool"
+        except Exception:
+            is_tool = False
+        if is_tool:                                    # xEdit / xLODGen: no mod name to ask for
+            self.run(self.m.install, path, None, self.bridge.chooser, then=self._installed)
+            return
         name, ok = QInputDialog.getText(self, "Install mod", "Name for this mod:", text=Manager.guess_name(path))
         if ok and name.strip():
             self.run(self.m.install, path, name.strip(), self.bridge.chooser,
-                     then=lambda r: self.say(f"Installed {r[0]} ({r[1]['type']}). Deploy to put it in the game."))
+                     then=self._installed)
+
+    def _installed(self, r):
+        if r[1].get("type") == "tool":
+            self.say(f"Installed the tool {r[0]}. Open it from the Tools tab.")
+            self.refresh()
+            self.tabs.setCurrentIndex(self.tabs.indexOf(self.tools_tab))
+        else:
+            self.say(f"Installed {r[0]} ({r[1]['type']}). Deploy to put it in the game.")
 
     def add_staged(self):
         names = self.m.staged_not_in_profile()

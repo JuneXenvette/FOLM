@@ -26,6 +26,7 @@ Point FOLM at a throwaway data folder while developing, so your real setup stays
 | `folm_core/fomod.py` | Native XML FOMOD installer |
 | `folm_core/legacy.py`, `fomm_shim/FommShim.cs` | Old FOMM C# installers: Mono + FOLM's FOMM API shim, sandboxed with bubblewrap |
 | `folm_core/wintool.py` | Windows `.exe` installers/patchers: Proton's Wine + bubblewrap, game folder mounted copy-on-write (overlayfs in a user namespace); writes become the mod |
+| `folm_core/tools.py` | Tools tab catalog (GECK, xEdit, xLODGen): where to get them, finding and running them in the game's prefix |
 | `folm_core/deploy.py` | Hard-link deployment, case merging, game-file backups, exact undeploy |
 | `folm_core/loadorder.py`, `plugins.py`, `loot.py` | Plugin order: masters, LOOT masterlist rules, plugins.txt + timestamps |
 | `folm_core/health.py`, `requires.py` | Health check; requirement scan (DLL startup checks, known list, Nexus requirements) |
@@ -68,6 +69,8 @@ These kept FOLM safe and pleasant to use; please keep them.
 - **Fallout 3 (Wanderer edition):** a full test run, FOSE and FO3-specific checks.
 - **Wayland:** the borderless-window fix uses X11 tools; under Wayland the game runs but that fix doesn't.
 - **Update checks** for Nexus mods, and "replace / update" when installing a mod that's already staged.
+- **xEdit Quick Auto Clean** from LOOT's "dirty plugin" warnings (a "Clean it" button), and testing
+  xLODGen's output in game: the Tools tab runs both, but neither is tested on a real game yet.
 - **Packaging:** AppImage or Flatpak so players don't need the Python setup.
 - **The FO3 → New Vegas converter** ([docs/fo3-converter.md](docs/fo3-converter.md)): only the check report works.
 

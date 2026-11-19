@@ -59,6 +59,9 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
   official order. FOLM can also build a Readius patch for TTW 3 from your own copy of Readius. FOLM never
   bundles or re-hosts TTW.
 - **GECK under Proton** for mod makers: opens with your mods loaded and turns what you save into a mod.
+- **Tools tab:** GECK, FNVEdit/FO3Edit (xEdit) and xLODGen. Installed tools open with your mods loaded; missing
+  ones are greyed out with a link to get them. Drop a tool's download on FOLM to add it. What xEdit saves becomes
+  the mod "xEdit output", what xLODGen builds becomes "Generated LOD" (xEdit's backups are kept aside).
 
 ## Install
 
