@@ -3,19 +3,19 @@
 # so players only need the one file (plus Steam). The same script runs on GitHub's release
 # builder (.github/workflows/release.yml) and on your own PC.
 #
-#   packaging/build-appimage.sh [VERSION]        VERSION defaults to APP_VERSION in folm_core/nexus.py
+#   packaging/build-appimage.sh [VERSION]        VERSION defaults to VERSION in folm_core/version.py
 #
 # Every download is pinned to one exact version and checked against its SHA-256, so a build
 # always contains the same pieces. To update one, change its line below (file, URL and checksum).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${1:-$(sed -n 's/^APP_NAME, APP_VERSION = "FOLM", "\(.*\)".*/\1/p' "$ROOT/folm_core/nexus.py")}"
+VERSION="${1:-$(sed -n 's/^VERSION = "\(.*\)"/\1/p' "$ROOT/folm_core/version.py")}"
 BUILD="${BUILD_DIR:-$ROOT/build}"
 CACHE="$BUILD/cache"
 APPDIR="$BUILD/FOLM.AppDir"
 OUT="${OUT_DIR:-$ROOT/dist}"
-[ -n "$VERSION" ] || { echo "no version given and none found in folm_core/nexus.py" >&2; exit 1; }
+[ -n "$VERSION" ] || { echo "no version given and none found in folm_core/version.py" >&2; exit 1; }
 
 # file | url | sha256
 PINS="

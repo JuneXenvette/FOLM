@@ -27,4 +27,4 @@ echo
 .venv/bin/python folm.py doctor || true
 echo
 echo "Done. Start FOLM with:  ./run-folm.sh"
-echo "Optional: ./make-shortcut.sh adds FOLM to your app menu and lets Nexus 'Mod Manager Download' buttons open it."
+echo "Optional: ./make-shortcut.sh adds FOLM to your app menu."

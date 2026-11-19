@@ -41,8 +41,6 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
   and the like. FOLM runs them with Proton's Wine in a sandbox, with your game folder protected
   (copy-on-write): whatever the program changes or creates becomes a normal mod you can turn off.
   [How it works](docs/windows-installers.md).
-- **Nexus "Mod Manager Download" button:** click it on Nexus and FOLM downloads and installs the mod
-  (works with free accounts; you use your own API key).
 - **Deploys without a virtual file system:** mods are hard-linked into the game folder (no extra disk space,
   instant), case problems (`Textures` vs `textures`) are merged away, and **Undeploy** puts the game folder
   back exactly as it was.
@@ -73,7 +71,7 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
 
 ## Install
 
-You need Steam with the game installed (run it once to the main menu first).
+You need Steam with the game installed (run it once to the main menu first). What's new: [CHANGELOG.md](CHANGELOG.md).
 
 ### The easy way: AppImage (one file, nothing else to install)
 
@@ -118,7 +116,7 @@ except the game folder while mods are deployed, and the game's INI files (backed
 ## First steps
 
 1. **Add mods:** drag a downloaded mod file onto the window, use **Install mod…**, or add your mods folder in the
-   **Library** tab and double-click. Or use Nexus's Mod Manager Download button.
+   **Library** tab and double-click.
 2. **Tick** the mods you want and press **▶ Play**. FOLM deploys, sorts, checks and starts the game.
 3. Something wrong? Run **🩺 Health check**. After a crash, FOLM offers a crash report.
 4. Modding tools (GECK, xEdit, xLODGen) are in the **Tools** tab.
@@ -155,22 +153,16 @@ On by default (**⚙ Settings** in the app). On deploy FOLM redates the game's a
 is installed, otherwise into the game's `Fallout.ini` (backed up first). Undeploy restores the exact previous
 values. No dummy archive needed.
 
-## Nexus downloads ("Mod Manager Download")
+## Mods from Nexus
 
-Click **Mod Manager Download** on a Nexus Mods page and FOLM downloads the file, runs the right installer
-(FOMOD wizard, old FOMM script, RAR, plain data…) and adds the mod to your list. Free accounts work: the
-button gives FOLM a one-time download ticket.
+Download the mod with Nexus's normal **Manual download** button, then drag the file onto FOLM's window (or use
+**Install mod…**, or add your downloads folder in the **Library** tab). FOLM needs no Nexus account or API key.
+Keep Nexus's file name (like `JIP LN NVSE-58277-57-40-1700000000.7z`): the number in it tells FOLM which
+Nexus page the mod came from, for the requirement check and the duplicate check.
 
-1. Connect once: **⚙ Settings → Nexus Mods account…** (or `python3 folm.py nexus-login`). Paste your
-   *Personal API Key* from [nexusmods.com/settings/api-keys](https://www.nexusmods.com/settings/api-keys).
-   It's stored only on this PC (owner-only file) and sent only to the Nexus API.
-2. FOLM offers to become the handler for Nexus links right after you connect. Change it any time in
-   **⚙ Settings → Open Nexus "Mod Manager Download" links in FOLM** (unticking gives links back to whatever
-   handled them before). From source, `./make-shortcut.sh --nexus` does the same.
-
-If FOLM is open, links go to that window; otherwise FOLM starts. Downloads are kept in
-`~/Games/FOLM/downloads/nexus/`, and each mod remembers its Nexus page and version. Collections aren't
-supported yet.
+FOLM 1.0 could also sign in to Nexus and take "Mod Manager Download" links. That was removed in 1.1.1:
+Nexus only allows apps it has registered to use players' personal API keys. When you update, FOLM gives
+those links back to the app that had them before and deletes the API key it had stored.
 
 ## Mod health check
 
@@ -349,8 +341,6 @@ python3 folm.py preflight                     # the pre-Play checks (play runs t
 python3 folm.py health                        # are mods really working? (files, plugins, what loaded)
 python3 folm.py requires                      # what mods need that isn't installed (plugin checks + Nexus lists)
 python3 folm.py handled add PLUGIN TEXT --by MOD --note ...   # mark a LOOT message as handled (list / remove)
-python3 folm.py nexus-login                   # connect your Nexus account (personal API key)
-python3 folm.py nxm "nxm://newvegas/mods/…"   # download + install a Mod Manager Download link
 ./backup.sh                                   # back up the project, FOLM data, saves and INIs
 ```
 

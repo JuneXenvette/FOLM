@@ -544,14 +544,27 @@ class AppImage(Temp):
         self.env(XDG_DATA_HOME=os.path.join(self.tmp, "share"), APPIMAGE=old)
         desktop.write_entries()
         self.assertEqual(desktop.recorded_launcher(), old)
-        with open(os.path.join(desktop.apps_dir(), desktop.NXM)) as fh:
-            self.assertIn('Exec="%s" --nxm %%u' % old, fh.read())
+        self.assertFalse(os.path.exists(os.path.join(desktop.apps_dir(), desktop.NXM)))   # no Nexus handler any more
         self.assertFalse(desktop.refresh())                       # same file: nothing to do
         self.env(APPIMAGE=new)
         self.assertTrue(desktop.refresh())                        # newer AppImage run: entries move to it
         self.assertEqual(desktop.recorded_launcher(), new)
         with open(os.path.join(desktop.apps_dir(), desktop.MAIN)) as fh:
             self.assertIn('Exec="%s"' % new.replace("$", "\\$"), fh.read())
+
+    def test_folm_1_0_nexus_setup_is_undone(self):
+        from folm_core import desktop
+        self.env(XDG_DATA_HOME=os.path.join(self.tmp, "share"))
+        home = os.path.join(self.tmp, "home")
+        key = self.write("home/nexus.json", b'{"key": "secret"}')
+        handler = self.write("share/applications/folm-nxm.desktop", b"[Desktop Entry]\n")
+        other = self.write("home/profiles.json", b"{}")
+        done = desktop.retire_nexus_links(home)
+        self.assertFalse(os.path.exists(key))
+        self.assertFalse(os.path.exists(handler))
+        self.assertTrue(os.path.exists(other))                    # nothing else of FOLM's is touched
+        self.assertIn("deleted the stored Nexus API key", done)
+        self.assertEqual(desktop.retire_nexus_links(home), [])   # second start: nothing left to do
 
     def test_source_checkout_entries_are_left_alone(self):
         from folm_core import desktop

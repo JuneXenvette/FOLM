@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""folm - The FOLM Project command-line mod manager (v1.1).
+"""folm - The FOLM Project command-line mod manager (v1.1.1).
 
 Setup
   folm.py init                        find the game and its Proton prefix
@@ -84,48 +84,6 @@ def cmd_install(a, m):
     for w in r.get("warnings", []):
         print(f"  ! {w}")
     print(f"  staged as {name!r} (enabled in profile {m.active!r}). Run 'folm.py deploy'.")
-
-
-def cmd_nexus_login(a, m):
-    import getpass
-    from folm_core import nexus
-    from folm_core.manager import home
-    print("Get your personal API key at https://www.nexusmods.com/settings/api-keys (bottom of the page).")
-    key = getpass.getpass("Paste it here (it won't show): ").strip()
-    if not key:
-        raise FolmError("no key given")
-    try:
-        acc = nexus.validate(key)
-    except nexus.NexusError as e:
-        raise FolmError(str(e))
-    nexus.save_key(home(), key, acc)
-    print(f"Signed in as {acc['name']} ({'Premium' if acc['premium'] else 'free account'}). "
-          "The key is stored only on this PC.")
-
-
-def cmd_nexus_logout(a, m):
-    from folm_core import nexus
-    from folm_core.manager import home
-    nexus.forget_key(home())
-    print("Nexus API key removed from this PC.")
-
-
-def cmd_nxm(a, m):
-    from folm_core import nexus
-    from folm_core.manager import home
-    if not a.here and nexus.send_to_running_app(home(), a.url):
-        print("Sent to the open FOLM window.")
-        return
-    try:
-        link = nexus.parse(a.url)
-    except nexus.NexusError as e:
-        raise FolmError(str(e))
-    if link["edition"] != m.edition:
-        m = Manager(link["edition"])
-    path, name, source = m.nexus_download(a.url, log=print)
-    name, r = m.install(path, name, chooser=None if a.auto else terminal_chooser, log=print)
-    m.set_source(name, source)
-    print(f"Installed {name!r} ({r['type']}) in profile {m.active!r}. Run 'folm.py deploy'.")
 
 
 def cmd_add(a, m):
@@ -472,12 +430,6 @@ def main(argv=None):
     s.add_argument("--no-deploy", action="store_true", help="don't deploy changes first")
     sub.add_parser("preflight", help="run the pre-Play checks")
     sub.add_parser("doctor", help="check this PC has the system tools FOLM uses")
-    sub.add_parser("nexus-login", help="store your Nexus personal API key on this PC")
-    sub.add_parser("nexus-logout", help="remove the stored Nexus API key")
-    s = sub.add_parser("nxm", help="download + install a Nexus 'Mod Manager Download' link")
-    s.add_argument("url"); s.add_argument("--auto", action="store_true", help="FOMOD: take the defaults")
-    s.add_argument("--here", action="store_true", help="don't hand the link to an open FOLM window")
-    sub.add_parser("health", help="check that mods are really working (files, plugins, last launch)")
     rq = sub.add_parser("requires", help="what mods need that isn't installed (plugin checks + Nexus requirement lists)")
     rq.add_argument("mod", nargs="?", help="only this mod")
     rq.add_argument("--offline", action="store_true", help="don't ask Nexus; use the saved lists")
@@ -493,13 +445,19 @@ def main(argv=None):
     s = sub.add_parser("conflicts"); s.add_argument("name", nargs="?"); s.add_argument("--limit", type=int, default=5)
     s = sub.add_parser("convert-check"); s.add_argument("plugin"); s.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
+    try:
+        from folm_core import desktop
+        from folm_core.manager import home
+        desktop.retire_nexus_links(home())             # undo FOLM 1.0's Nexus sign-in (see desktop.py)
+    except OSError:
+        pass
     m = Manager(a.edition)
     cmds = {"init": cmd_init, "install": cmd_install, "add": cmd_add, "list": cmd_list,
             "enable": lambda a, m: cmd_toggle(a, m, True), "disable": lambda a, m: cmd_toggle(a, m, False),
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "doctor": cmd_doctor, "health": cmd_health, "requires": cmd_requires, "nexus-login": cmd_nexus_login, "nexus-logout": cmd_nexus_logout, "nxm": cmd_nxm, "loot": cmd_loot, "handled": cmd_handled, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "doctor": cmd_doctor, "health": cmd_health, "requires": cmd_requires, "loot": cmd_loot, "handled": cmd_handled, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
     try:
         sys.exit(cmds[a.cmd](a, m) or 0)
     except FolmError as e:

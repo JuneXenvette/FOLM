@@ -36,7 +36,7 @@ Point FOLM at a throwaway data folder while developing, so your real setup stays
 | `folm_core/wineprefix.py`, `ini.py`, `window.py` | Proton/Wine: DLL overrides, INI edits that undo cleanly, borderless window |
 | `folm_core/crash.py`, `saves.py` | Crash reports; reading plugin lists from save files |
 | `folm_core/esp.py`, `scriptcode.py`, `bsa.py` | Readers/writers for plugins, compiled scripts and BSA archives |
-| `folm_core/nexus.py` | nxm:// links, Nexus API downloads |
+| `folm_core/version.py` | FOLM's version number; release tags must match it |
 | `games/<edition>/game.json` | Per-game facts (exe names, Steam app ids, vanilla plugins) |
 
 [docs/development-log.md](docs/development-log.md) is the diary of how all this was built and tested,
@@ -55,9 +55,10 @@ These kept FOLM safe and pleasant to use; please keep them.
   (downloaded by the player) builds TTW; never ship or re-host TTW or its installer.
 - **Only refuse what isn't for the game.** Every New Vegas / Fallout 3 mod format should install; a file
   is turned away only if it's for another game, with a plain reason.
-- **Privacy.** Nothing leaves the PC except requests the player starts (Nexus downloads, LOOT masterlist,
-  Nexus requirement lookups with mod ids only). Crash reports stay local and redact home paths and usernames.
-  The Nexus API key stays in an owner-only file and only goes to the Nexus API.
+- **Privacy.** Nothing leaves the PC except the LOOT masterlist download and Nexus requirement lookups
+  (public data, mod ids only, no account). Crash reports stay local and redact home paths and usernames.
+- **No Nexus API keys.** Nexus only lets apps it has registered use players' personal API keys, so FOLM
+  doesn't ask for one (the 1.0 sign-in was removed in 1.1.1). Don't add it back without registering FOLM.
 - **Sandbox untrusted installers.** Old installer scripts and Windows installers run under bubblewrap with
   no network and only the folders they need; Windows installers never write to the real game folder.
 - **Original artwork only.** No Bethesda or other third-party logos or art.

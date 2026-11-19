@@ -13,8 +13,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from PySide6.QtNetwork import QLocalServer                                                     # noqa: E402
-from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, Signal, Slot, QUrl, qVersion                  # noqa: E402
+from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, Signal, Slot, QUrl, qVersion                  # noqa: E402
 from PySide6.QtGui import QActionGroup, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPixmap, QShortcut      # noqa: E402
 from PySide6.QtWidgets import (                                         # noqa: E402
     QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
@@ -240,7 +239,6 @@ class Main(QMainWindow):
         self.tools_told = False
         self.m = Manager("courier")
         self.bridge = ChoiceBridge(self)
-        self._listen_for_links()
         self.watcher = QFileSystemWatcher(self)       # refresh when the CLI (or anything) changes the setup
         self.watcher.fileChanged.connect(self.on_profile_file_changed)
         self.watcher.directoryChanged.connect(self.on_profile_file_changed)
@@ -311,10 +309,6 @@ class Main(QMainWindow):
             act.toggled.connect(lambda on, k=key: self.change_setting(k, on))
             self.setting_actions[key] = act
         self.settings_menu.addSeparator()
-        self.settings_menu.addAction("Nexus Mods account…").triggered.connect(self.nexus_account)
-        self.nxm_action = self.settings_menu.addAction("Open Nexus \"Mod Manager Download\" links in FOLM")
-        self.nxm_action.setCheckable(True)
-        self.nxm_action.triggered.connect(self.toggle_nexus_links)
         self.menu_action = self.settings_menu.addAction("Add FOLM to the app menu")
         self.menu_action.triggered.connect(self.add_to_app_menu)
         self.settings_menu.aboutToShow.connect(self.refresh_desktop_actions)
@@ -983,83 +977,9 @@ class Main(QMainWindow):
                 self.refresh()
         self.run(self.m.geck, edit, then=done)
 
-    # ---------------------------------------------------------------- Nexus "Mod Manager Download"
-    def _listen_for_links(self):
-        """Accept nxm:// links from the link handler while this window is open."""
-        from folm_core import nexus
-        from folm_core.manager import home as folm_home
-        path = nexus.socket_path(folm_home())
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        QLocalServer.removeServer(path)                    # a stale socket from a crash
-        self.link_server = QLocalServer(self)
-        self.link_server.setSocketOptions(QLocalServer.UserAccessOption)
-        if not self.link_server.listen(path):
-            return
-        self.link_server.newConnection.connect(self._on_link_connection)
-
-    def _on_link_connection(self):
-        conn = self.link_server.nextPendingConnection()
-        buf = bytearray()
-
-        def read():
-            buf.extend(bytes(conn.readAll()))
-            if b"\n" in buf:
-                url = buf.split(b"\n")[0].decode("utf-8", "replace").strip()
-                conn.disconnectFromServer()
-                self.handle_nxm(url)
-        conn.readyRead.connect(read)
-        if conn.bytesAvailable():
-            read()
-
-    def nexus_account(self):
-        from folm_core import nexus
-        from folm_core.manager import home as folm_home
-        acc = nexus.account(folm_home()) if nexus.load_key(folm_home()) else {}
-        box = QMessageBox(self)
-        box.setWindowTitle("Nexus Mods account")
-        if acc:
-            box.setText(f"Signed in as <b>{acc.get('name')}</b> ({'Premium' if acc.get('premium') else 'free account'}).<br>"
-                        "The 'Mod Manager Download' button on Nexus sends mods straight to FOLM.")
-            change = box.addButton("Use a different key…", QMessageBox.ActionRole)
-            out = box.addButton("Sign out", QMessageBox.DestructiveRole)
-            box.addButton(QMessageBox.Close)
-            box.exec()
-            if box.clickedButton() is out:
-                nexus.forget_key(folm_home())
-                self.say("Nexus API key removed from this PC.")
-                return
-            if box.clickedButton() is not change:
-                return
-        return self.ask_nexus_key()
-
-    def ask_nexus_key(self):
-        from folm_core import nexus
-        from folm_core.manager import home as folm_home
-        QDesktopServices.openUrl(QUrl("https://www.nexusmods.com/settings/api-keys"))
-        key, ok = QInputDialog.getText(
-            self, "Connect to Nexus Mods",
-            "FOLM opened your Nexus API keys page in the browser.\n"
-            "Copy your Personal API Key (bottom of that page) and paste it here.\n\n"
-            "It's stored only on this PC and sent only to Nexus Mods.", QLineEdit.Password)
-        if not ok or not key.strip():
-            return False
-        try:
-            acc = nexus.validate(key.strip())
-        except nexus.NexusError as e:
-            QMessageBox.warning(self, APP_NAME, str(e))
-            return False
-        nexus.save_key(folm_home(), key.strip(), acc)
-        self.say(f"Connected to Nexus Mods as {acc['name']} ({'Premium' if acc['premium'] else 'free account'}).")
-        from folm_core import desktop
-        if not desktop.handles_nexus() and QMessageBox.question(
-                self, APP_NAME, "Make the \"Mod Manager Download\" button on Nexus send mods to FOLM?\n\n"
-                "You can change this later in ⚙ Settings.") == QMessageBox.Yes:
-            self.toggle_nexus_links(True)
-        return True
-
+    # ---------------------------------------------------------------- app menu
     def refresh_desktop_actions(self):
         from folm_core import desktop
-        self.nxm_action.setChecked(desktop.handles_nexus())
         self.menu_action.setText("Update FOLM in the app menu" if desktop.in_menu() else "Add FOLM to the app menu")
 
     def add_to_app_menu(self):
@@ -1069,59 +989,6 @@ class Main(QMainWindow):
         except OSError as e:
             return QMessageBox.warning(self, APP_NAME, f"Couldn't add FOLM to the app menu: {e}")
         self.say(f"FOLM is in your app menu (it starts {exe}).")
-
-    def toggle_nexus_links(self, on):
-        from folm_core import desktop
-        from folm_core.manager import home as folm_home
-        try:
-            if on:
-                desktop.take_nexus_links(folm_home())
-                ok = desktop.handles_nexus()
-                self.say("Nexus \"Mod Manager Download\" links now open in FOLM." if ok else
-                         "Couldn't set FOLM as the handler for Nexus links (xdg-mime is missing or failed).")
-            else:
-                old = desktop.give_back_nexus_links(folm_home())
-                self.say(f"Nexus links open in {old} again." if old else
-                         "No previous handler was recorded; Nexus links still open in FOLM.")
-        except OSError as e:
-            QMessageBox.warning(self, APP_NAME, str(e))
-
-    def handle_nxm(self, url):
-        from folm_core import nexus
-        from folm_core.manager import home as folm_home
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
-        try:
-            link = nexus.parse(url)
-        except nexus.NexusError as e:
-            QMessageBox.warning(self, APP_NAME, str(e))
-            return
-        if link["edition"] != self.m.edition:
-            i = self.edition.findData(link["edition"])
-            if i >= 0:
-                self.edition.setCurrentIndex(i)            # switches self.m via on_edition
-        if not self.m.ready:
-            QMessageBox.warning(self, APP_NAME, "Set up this game in FOLM first, then click the Nexus button again.")
-            return
-        if not nexus.load_key(folm_home()) and not self.ask_nexus_key():
-            return
-        self.tabs.setCurrentIndex(self.tabs.count() - 1)  # Log tab, to show download progress
-
-        def downloaded(r):
-            if not r:
-                return
-            path, name, source = r
-            name, ok = QInputDialog.getText(self, "Install mod", "Downloaded from Nexus. Name for this mod:", text=name)
-            if not ok or not name.strip():
-                self.say(f"Kept the download in your library: {path}")
-                return
-
-            def installed(res):
-                self.m.set_source(res[0], source)
-                self.say(f"Installed {res[0]} ({res[1]['type']}) from Nexus. Deploy to put it in the game.")
-            self.run(self.m.install, path, name.strip(), self.bridge.chooser, then=installed)
-        self.run(self.m.nexus_download, url, then=downloaded)
 
     # ---------------------------------------------------------------- "Mark as handled" (LOOT messages)
     def plugin_menu(self, pos):
@@ -1339,28 +1206,25 @@ def self_test():
     import subprocess
     for mod in ("manager", "desktop", "detect", "fomod", "wintool", "tools"):
         importlib.import_module("folm_core." + mod)
-    from folm_core import archive, nexus
+    from folm_core import archive, version
     app = QApplication(sys.argv[:1])
     sz = archive.seven_zip()
     if not sz:
         raise SystemExit("self-test: no 7-Zip")
     ver = subprocess.run([sz, "i"], capture_output=True, text=True).stdout.splitlines()
-    print(f"FOLM {nexus.APP_VERSION}: Qt {qVersion()} ({app.platformName()}), Python {sys.version.split()[0]}, "
+    print(f"FOLM {version.VERSION}: Qt {qVersion()} ({app.platformName()}), Python {sys.version.split()[0]}, "
           f"{next((v.strip() for v in ver if v.strip().startswith('7-Zip')), sz)}")
 
 
 def main():
     if "--self-test" in sys.argv:
         return self_test()
-    if "--nxm" in sys.argv[:-1]:
-        from folm_core import nexus
-        from folm_core.manager import home as folm_home
-        if nexus.send_to_running_app(folm_home(), sys.argv[sys.argv.index("--nxm") + 1]):
-            return                                         # the open FOLM window takes it from here
     install_error_reporter()
     try:
         from folm_core import desktop
+        from folm_core.manager import home as folm_home
         desktop.refresh()                  # a moved or newer AppImage: keep the app menu entry pointing here
+        desktop.retire_nexus_links(folm_home())
     except OSError:
         pass
     app = QApplication(sys.argv)
@@ -1371,11 +1235,8 @@ def main():
         icon.addFile(os.path.join(HERE, "assets", f"folm-icon-{size}.png"))
     app.setWindowIcon(icon)
     app.setDesktopFileName("folm")
-    nxm = sys.argv[sys.argv.index("--nxm") + 1] if "--nxm" in sys.argv[:-1] else None
     w = Main()
     w.show()
-    if nxm:
-        QTimer.singleShot(300, lambda: w.handle_nxm(nxm))
     sys.exit(app.exec())
 
 

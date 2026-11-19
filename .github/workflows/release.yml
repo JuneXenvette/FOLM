@@ -27,9 +27,9 @@ jobs:
         id: v
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="$(git rev-parse --short HEAD)"; fi
-          app="$(sed -n 's/^APP_NAME, APP_VERSION = "FOLM", "\(.*\)".*/\1/p' folm_core/nexus.py)"
+          app="$(sed -n 's/^VERSION = "\(.*\)"/\1/p' folm_core/version.py)"
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "${v%%-*}" != "$app" ]; then
-            echo "::error::tag $GITHUB_REF_NAME doesn't match APP_VERSION $app in folm_core/nexus.py (Nexus needs them equal)"
+            echo "::error::tag $GITHUB_REF_NAME does not match VERSION $app in folm_core/version.py"
             exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
@@ -50,6 +50,14 @@ jobs:
           name: FOLM-${{ steps.v.outputs.version }}-AppImage
           path: dist/*
 
+      - name: Release notes from CHANGELOG.md
+        if: github.ref_type == 'tag'
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          awk -v h="## ${v%%-*}" '$0 == h {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "::error::CHANGELOG.md has no '## ${v%%-*}' section"; exit 1; }
+          printf '\n**Check the download:** `sha256sum -c FOLM-%s-x86_64.AppImage.sha256`\n' "$v" >> notes.md
+
       - name: Draft release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
@@ -58,4 +66,4 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           name: FOLM ${{ steps.v.outputs.version }}
           files: dist/*
-          generate_release_notes: true
+          body_path: notes.md

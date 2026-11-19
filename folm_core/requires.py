@@ -8,7 +8,7 @@ Three sources, strongest first:
    so this works even when the mod page doesn't list the requirement (Vegas Shaders' doesn't).
 2. FOLM's own list (KNOWN): requirements found by testing, with where to get them.
 3. Nexus Mods' "Requirements" list for every mod that came from Nexus (the mod id is in the
-   download's file name, or recorded by FOLM's Nexus download). Fetched from Nexus's public API
+   download's file name, or recorded by FOLM's Nexus download in versions before 1.1). Fetched from Nexus's public API
    (only mod ids are sent; no account or key), cached for a week, and used offline from the cache.
 
 check(m) -> [{"severity", "mod", "needs", "how", "url", "notes"}]
@@ -170,7 +170,7 @@ def _fetch(domain, ids, opener=urllib.request.urlopen):
     q = ("query($ids: [CompositeDomainWithIdInput!]!) { legacyModsByDomain(ids: $ids) { nodes { modId "
          "modRequirements { nexusRequirements { nodes { modId modName url externalRequirement notes } } } } } }")
     body = json.dumps({"query": q, "variables": {"ids": [{"gameDomain": domain, "modId": i} for i in ids]}}).encode()
-    from .nexus import APP_NAME, APP_VERSION
+    from .version import APP_NAME, VERSION as APP_VERSION
     req = urllib.request.Request(GRAPHQL, data=body, headers={
         "Content-Type": "application/json", "Application-Name": APP_NAME, "Application-Version": APP_VERSION,
         "User-Agent": f"{APP_NAME}/{APP_VERSION} (Linux)"})

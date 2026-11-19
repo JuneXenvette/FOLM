@@ -7,8 +7,7 @@ body:
         FOLM is a community project provided as-is: the original author doesn't maintain it, so a fix
         depends on someone picking it up. A complete report makes that much more likely.
 
-        **Please don't paste your Nexus API key or anything from `nexus.json`.** FOLM's crash report and
-        health check already leave out your home folder and user name.
+        FOLM's crash report and health check already leave out your home folder and user name.
   - type: textarea
     id: what
     attributes:

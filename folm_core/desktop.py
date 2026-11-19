@@ -1,4 +1,4 @@
-"""desktop - FOLM in the app menu, and Nexus "Mod Manager Download" links opening in FOLM.
+"""desktop - FOLM in the app menu.
 
 The same job as make-shortcut.sh, done from inside the app so it also works for the AppImage
 (a single file has no script beside it to run). Entries FOLM writes remember which program they
@@ -11,7 +11,7 @@ import subprocess
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MARK = "X-FOLM-Launcher"
-MAIN, NXM = "folm.desktop", "folm-nxm.desktop"
+MAIN, NXM = "folm.desktop", "folm-nxm.desktop"      # NXM: the Nexus link handler of FOLM 1.0
 ICON_SIZES = (48, 64, 128, 256, 512)
 
 
@@ -47,10 +47,7 @@ def _entries(exe):
     main = ("[Desktop Entry]\nType=Application\nName=FOLM\nGenericName=Fallout Linux Manager\n"
             "Comment=Mod manager for Fallout: New Vegas and Fallout 3 on Linux\n"
             f"Exec={q}\nCategories=Game;Utility;\n" + common)
-    nxm = ("[Desktop Entry]\nType=Application\nName=FOLM (Nexus downloads)\n"
-           "Comment=Install Nexus Mods \"Mod Manager Download\" links with FOLM\n"
-           f"Exec={q} --nxm %u\nNoDisplay=true\nMimeType=x-scheme-handler/nxm;\n" + common)
-    return {MAIN: main, NXM: nxm}
+    return {MAIN: main}
 
 
 def _quiet(cmd):
@@ -78,12 +75,8 @@ def in_menu():
     return os.path.isfile(os.path.join(apps_dir(), MAIN))
 
 
-def handles_nexus():
-    return _quiet(["xdg-mime", "query", "default", "x-scheme-handler/nxm"]) == NXM
-
-
 def write_entries(exe=None):
-    """Put FOLM in the app menu (with its icon) and register it as able to open nxm:// links."""
+    """Put FOLM in the app menu, with its icon."""
     exe = exe or launcher()
     icons = os.path.join(_data_home(), "icons", "hicolor")
     for s in ICON_SIZES:
@@ -104,34 +97,32 @@ def write_entries(exe=None):
     return exe
 
 
-def _previous_file(home):
-    return os.path.join(home, "nxm-previous-handler.txt")
-
-
-def take_nexus_links(home):
-    """Make Nexus 'Mod Manager Download' links open in FOLM; remembers the previous handler."""
-    if not in_menu():
-        write_entries()
-    cur = _quiet(["xdg-mime", "query", "default", "x-scheme-handler/nxm"])
-    if cur != NXM:
-        os.makedirs(home, exist_ok=True)
-        with open(_previous_file(home), "w") as fh:
-            fh.write(cur + "\n")
-    _quiet(["xdg-mime", "default", NXM, "x-scheme-handler/nxm"])
-    return cur if cur != NXM else None
-
-
-def give_back_nexus_links(home):
-    """Hand nxm:// links back to whatever opened them before FOLM. Returns its name or None."""
-    try:
-        with open(_previous_file(home)) as fh:
-            old = fh.read().strip()
-    except OSError:
-        old = ""
-    if old and old != NXM:
-        _quiet(["xdg-mime", "default", old, "x-scheme-handler/nxm"])
-        return old
-    return None
+def retire_nexus_links(home):
+    """FOLM 1.0 could sign in to Nexus and open 'Mod Manager Download' links. 1.1.1 dropped that
+    (Nexus only allows personal API keys in apps it has registered). Undo what 1.0 set up: give the
+    links back to the app that had them before, remove FOLM's link handler, and delete the stored
+    API key, which nothing uses any more. Quiet; returns what it did, for the log."""
+    done = []
+    handler = os.path.join(apps_dir(), NXM)
+    if _quiet(["xdg-mime", "query", "default", "x-scheme-handler/nxm"]) == NXM:
+        try:
+            with open(os.path.join(home, "nxm-previous-handler.txt")) as fh:
+                old = fh.read().strip()
+        except OSError:
+            old = ""
+        if old and old != NXM:
+            _quiet(["xdg-mime", "default", old, "x-scheme-handler/nxm"])
+            done.append(f"Nexus links open in {old} again")
+    if os.path.isfile(handler):
+        os.remove(handler)
+        _quiet(["update-desktop-database", apps_dir()])
+        done.append("removed FOLM's Nexus link handler")
+    for f in ("nexus.json", "nxm-previous-handler.txt"):
+        p = os.path.join(home, f)
+        if os.path.isfile(p):
+            os.remove(p)
+            done.append("deleted the stored Nexus API key" if f == "nexus.json" else None)
+    return [d for d in done if d]
 
 
 def refresh():

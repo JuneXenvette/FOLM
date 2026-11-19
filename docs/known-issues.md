@@ -11,7 +11,7 @@ may be dated; each item is something FOLM should handle, test, or warn about.
 | MO2's virtual file system (USVFS) is a Windows hooking trick; under Wine/Proton it's fragile, version-sensitive, and some MO2 releases didn't work in Proton at all | MO2 | ✅ Native Linux, no VFS: hard links into the real Data folder |
 | MO2 on Linux may not see games installed after MO2; you must start the game through MO2 | MO2 (Linux installer) | ✅ FOLM finds Steam libraries each time; Play goes through Steam |
 | Tools like GECK only see mods when launched "inside" MO2's VFS | MO2 | ✅ Mods are really deployed, so GECK/FNVEdit see them with no special launch |
-| "Mod Manager Download" (`nxm://`) links fail on Linux: browser hands the link to the wrong app, or "unknown protocol" | Vortex, MO2 | ✅ `x-scheme-handler/nxm` desktop entry (`make-shortcut.sh --nexus`, reversible); links go to the open window. ⏳ Still to confirm by clicking in Firefox and Chrome |
+| "Mod Manager Download" (`nxm://`) links fail on Linux: browser hands the link to the wrong app, or "unknown protocol" | Vortex, MO2 | ➖ Not needed: FOLM installs the files you download with Nexus's Manual download button (the 1.0 link handler was removed in 1.1.1) |
 | Case-sensitive file system: `Textures/` vs `textures/` creates duplicates that the game ignores | All on Linux | ✅ Case merging on install and deploy |
 | Vortex isn't officially supported on Linux | Vortex | ✅ Built for Linux |
 
