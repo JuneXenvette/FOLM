@@ -68,3 +68,20 @@ Default settings: TAA + FSR 1 at RenderScale 0.67, about 35–40 FPS outdoors (f
 - Menu key **O**; settings are saved to `Data/NVSE/Plugins/VegasShaders.toml` only when you Save in the menu.
 - Performance options for weaker PCs ([Main.Main.ReducedQuality]): AOLowRes, GodRaysLowRes, ParallaxLite,
   CachedDistantShadows; [Shaders.Terrain.Parallax] HighQuality = false; FSR RenderScale.
+
+## Fallout 3 (Wanderer edition)
+
+Fallout 3 GOTY (Steam), same PC. Tested 2026-11-18: the game starts through FOSE, `GetFOSEVersion` returns 1,
+and Quick Start puts the character outside Vault 101.
+
+| Mod | Version | Source | FOLM type | Installs | In game | Notes |
+|---|---|---|---|---|---|---|
+| Fallout Anniversary Patcher | 1.1 | Nexus 24913 | windows-installer | ✅ (Wine sandbox, run from the game folder) | ✅ FOSE starts | Patched `Fallout3.exe` becomes part of the mod; undeploy restores the original |
+| FOSE | 1.3.2 (new loader) | Nexus 8606 | game-root | ✅ | ✅ `GetFOSEVersion` = 1 | Its `src/` folder isn't installed |
+| FO3 BSA Decompressor | 1.1 | Nexus 25720 | windows-installer | ✅ | ✅ loads | Meshes, Textures and Misc BSAs decompressed (~3.4 GB) |
+| Unofficial Fallout 3 ESM Patcher | 1.8 | Nexus 25717 | windows-installer | ✅ | ✅ loads | Patched ESMs become the mod |
+| Updated Unofficial Fallout 3 Patch | 3.6.5 | Nexus 19122 | fomod-xml | ✅ | ✅ loads | Needs ButcherPete (LOOT says so; link opens from the Plugins tab) |
+| ButcherPete FOSE | 4.0 | Nexus 26358 | data | ✅ | ✅ loads | |
+| Command Extender | | Nexus | data | ✅ | ✅ loads | |
+| Delay DLC Plus Updated - ENG | 1.0 | Nexus 25573 | data | ✅ | ✅ loads | |
+| FO3 Quick Start | 1.0 | Nexus 24644 | data | ✅ | ✅ intro skipped | |

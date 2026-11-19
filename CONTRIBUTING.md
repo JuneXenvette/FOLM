@@ -66,7 +66,7 @@ These kept FOLM safe and pleasant to use; please keep them.
 - **BAIN wizard scripts** (`wizard.txt`): plain BAIN packages install; scripted wizards aren't read yet.
 - **More Windows installers tested:** `folm_core/wintool.py` runs them; each new one tried and noted in
   `docs/compatibility.md` helps the next player.
-- **Fallout 3 (Wanderer edition):** a full test run, FOSE and FO3-specific checks.
+- **Fallout 3 (Wanderer edition):** FOSE, the Windows patchers and UF3P are tested (docs/compatibility.md); more FO3 mods and a long play session would help.
 - **Wayland:** the borderless-window fix uses X11 tools; under Wayland the game runs but that fix doesn't.
 - **Update checks** for Nexus mods, and "replace / update" when installing a mod that's already staged.
 - **xEdit Quick Auto Clean** from LOOT's "dirty plugin" warnings (a "Clean it" button), and testing
