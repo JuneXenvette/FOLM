@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=FOLM
+GenericName=Fallout Linux Manager
+Comment=Mod manager for Fallout: New Vegas and Fallout 3 on Linux
+Exec=folm
+Icon=folm
+Terminal=false
+Categories=Game;Utility;
+X-AppImage-Version=@VERSION@

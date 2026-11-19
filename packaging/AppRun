@@ -1,0 +1,17 @@
+#!/bin/sh
+# Starts FOLM from inside the AppImage.
+#   FOLM-x86_64.AppImage                 the app
+#   FOLM-x86_64.AppImage --nxm URL       install a Nexus "Mod Manager Download" link
+#   FOLM-x86_64.AppImage --cli ARGS...   the command-line tool (folm.py), e.g. --cli deploy
+# Nothing here changes PATH or library paths, so the game, Steam and Wine that FOLM starts
+# see the system exactly as they would without FOLM.
+HERE="$(dirname "$(readlink -f "$0")")"
+PY="$HERE/usr/python/bin/python3"
+APP="$HERE/usr/share/folm"
+export FOLM_7Z="$HERE/usr/bin/7zz"
+
+if [ "$1" = "--cli" ]; then
+  shift
+  exec "$PY" -s -E -B "$APP/folm.py" "$@"
+fi
+exec "$PY" -s -E -B "$APP/folm_gui.py" "$@"

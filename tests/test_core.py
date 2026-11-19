@@ -516,6 +516,52 @@ class InstallerKinds(Temp):
         self.assertFalse(wintool.runs_in_game_folder("/x/ESM Patcher.exe", "exe-installer"))
 
 
+class AppImage(Temp):
+    """What changes when FOLM runs from its AppImage: bundled 7-Zip, app-menu entries."""
+
+    def env(self, **kw):
+        old = {k: os.environ.get(k) for k in kw}
+        os.environ.update({k: v for k, v in kw.items() if v is not None})
+        for k, v in kw.items():
+            if v is None:
+                os.environ.pop(k, None)
+        self.addCleanup(lambda: [os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+                                 for k, v in old.items()])
+
+    def test_bundled_7zip_comes_first(self):
+        from folm_core import archive
+        fake = self.write("bin/7zz", b"#!/bin/sh\n")
+        os.chmod(fake, 0o755)
+        self.env(FOLM_7Z=fake)
+        self.assertEqual(archive.seven_zip(), fake)
+        self.env(FOLM_7Z=os.path.join(self.tmp, "gone"))          # missing: fall back to the system's
+        self.assertNotEqual(archive.seven_zip(), os.path.join(self.tmp, "gone"))
+
+    def test_menu_entries_follow_the_appimage(self):
+        from folm_core import desktop
+        old = self.write("Apps/FOLM-1.0.AppImage", b"")
+        new = self.write("Apps/FOLM 1.1 $test.AppImage", b"")
+        self.env(XDG_DATA_HOME=os.path.join(self.tmp, "share"), APPIMAGE=old)
+        desktop.write_entries()
+        self.assertEqual(desktop.recorded_launcher(), old)
+        with open(os.path.join(desktop.apps_dir(), desktop.NXM)) as fh:
+            self.assertIn('Exec="%s" --nxm %%u' % old, fh.read())
+        self.assertFalse(desktop.refresh())                       # same file: nothing to do
+        self.env(APPIMAGE=new)
+        self.assertTrue(desktop.refresh())                        # newer AppImage run: entries move to it
+        self.assertEqual(desktop.recorded_launcher(), new)
+        with open(os.path.join(desktop.apps_dir(), desktop.MAIN)) as fh:
+            self.assertIn('Exec="%s"' % new.replace("$", "\\$"), fh.read())
+
+    def test_source_checkout_entries_are_left_alone(self):
+        from folm_core import desktop
+        self.env(XDG_DATA_HOME=os.path.join(self.tmp, "share"), APPIMAGE=None)
+        desktop.write_entries()                                   # points at run-folm.sh, which exists
+        self.env(APPIMAGE=self.write("FOLM.AppImage", b""))
+        self.assertFalse(desktop.refresh())
+        self.assertTrue(desktop.recorded_launcher().endswith("run-folm.sh"))
+
+
 class CommandLine(unittest.TestCase):
     def test_help_runs(self):
         here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")

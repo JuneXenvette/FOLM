@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""folm - The FOLM Project command-line mod manager (v1.0).
+"""folm - The FOLM Project command-line mod manager (v1.1).
 
 Setup
   folm.py init                        find the game and its Proton prefix

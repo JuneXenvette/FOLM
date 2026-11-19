@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 
 API = "https://api.nexusmods.com/v1"
-APP_NAME, APP_VERSION = "FOLM", "1.0.0"   # sent to Nexus: keep it equal to the release
+APP_NAME, APP_VERSION = "FOLM", "1.1.0"   # sent to Nexus: keep it equal to the release
 GAMES = {"newvegas": "courier", "fallout3": "wanderer", "ttw": "courier"}
 NXM_RE = re.compile(r"^nxm://(?P<game>[a-z0-9]+)/mods/(?P<mod>\d+)/files/(?P<file>\d+)/?(?:\?(?P<query>.*))?$", re.I)
 

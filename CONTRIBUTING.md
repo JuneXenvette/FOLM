@@ -28,6 +28,8 @@ Point FOLM at a throwaway data folder while developing, so your real setup stays
 | `folm_core/legacy.py`, `fomm_shim/FommShim.cs` | Old FOMM C# installers: Mono + FOLM's FOMM API shim, sandboxed with bubblewrap |
 | `folm_core/wintool.py` | Windows `.exe` installers/patchers: Proton's Wine + bubblewrap, game folder mounted copy-on-write (overlayfs in a user namespace); writes become the mod |
 | `folm_core/tools.py` | Tools tab catalog (GECK, xEdit, xLODGen); running them safely is `Manager.run_tool` / `_begin_tool_session` in manager.py |
+| `folm_core/desktop.py` | App-menu entry and the Nexus link handler, written from the app (needed for the AppImage); entries follow a moved or newer AppImage |
+| `packaging/` | AppImage build: `build-appimage.sh` (pinned, checksum-checked Python, PySide6 and 7-Zip), `AppRun`, licences. `.github/workflows/release.yml` runs it for `v*` tags and makes a draft release |
 | `folm_core/deploy.py` | Hard-link deployment, case merging, game-file backups, exact undeploy |
 | `folm_core/loadorder.py`, `plugins.py`, `loot.py` | Plugin order: masters, LOOT masterlist rules, plugins.txt + timestamps |
 | `folm_core/health.py`, `requires.py` | Health check; requirement scan (DLL startup checks, known list, Nexus requirements) |

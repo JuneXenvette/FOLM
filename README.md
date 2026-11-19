@@ -73,12 +73,31 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
 
 ## Install
 
-You need Steam with the game installed (run it once to the main menu first), Python 3.10+ and a few
-system tools.
+You need Steam with the game installed (run it once to the main menu first).
 
-1. **Download FOLM** from the [Releases page](https://github.com/JuneXenvette/FOLM/releases) (the zip under
-   "Assets", or "Source code (zip)") and unpack it anywhere, for example `~/Apps/FOLM`. Or:
-   `git clone https://github.com/JuneXenvette/FOLM.git`
+### The easy way: AppImage (one file, nothing else to install)
+
+1. **Download** `FOLM-<version>-x86_64.AppImage` from the [Releases page](https://github.com/JuneXenvette/FOLM/releases).
+   It carries its own Python, Qt and 7-Zip.
+2. **Make it runnable** (right-click → Properties → Permissions → "Allow executing", or):
+   ```bash
+   chmod +x FOLM-*-x86_64.AppImage
+   ```
+3. **Double-click it.** On first start FOLM finds the game in your Steam libraries (or you pick the folder).
+   **⚙ Settings → Add FOLM to the app menu** puts it in your menu; if you later move the file or download a
+   newer one, the menu entry follows the one you last opened.
+
+The command-line tool is inside too: `./FOLM-*-x86_64.AppImage --cli doctor` (any `folm.py` command after `--cli`).
+To check a download: `sha256sum -c FOLM-*-x86_64.AppImage.sha256` (the `.sha256` file is on the same release).
+
+Optional extras switch on features the AppImage can't bring along: `unrar` (rare RAR files 7-Zip can't open),
+`mono-complete` and `bubblewrap` (old FOMM script installers, sandboxed Windows installers), `xdotool x11-utils wmctrl`
+(borderless window). If the AppImage won't start with a "FUSE" message, install `fuse3` (or run it with
+`--appimage-extract-and-run`).
+
+### From source (for development)
+
+1. `git clone https://github.com/JuneXenvette/FOLM.git` (or the "Source code (zip)" on a release).
 2. **Install the system tools.** On Debian / Ubuntu / Mint:
    ```bash
    sudo apt install p7zip-full unrar mono-complete bubblewrap xdotool x11-utils wmctrl python3-venv
@@ -86,17 +105,11 @@ system tools.
    Fedora: `sudo dnf install p7zip p7zip-plugins unrar mono-complete bubblewrap xdotool xprop wmctrl` ·
    Arch: `sudo pacman -S 7zip unrar mono bubblewrap xdotool xorg-xprop wmctrl`.
    Only 7-Zip is strictly needed; the rest switch on features (RAR files, old FOMM installers, borderless window).
-3. **Run setup** (makes FOLM's own Python environment and checks the tools):
-   ```bash
-   ./setup.sh
-   ```
-4. **Start FOLM:**
-   ```bash
-   ./run-folm.sh
-   ```
-   On first start FOLM finds the game in your Steam libraries (or you pick the folder).
-5. *Optional:* `./make-shortcut.sh` adds FOLM to your app menu; `./make-shortcut.sh --nexus` makes Nexus's
-   "Mod Manager Download" buttons open FOLM.
+3. **Run setup** (makes FOLM's own Python environment and checks the tools): `./setup.sh`
+4. **Start FOLM:** `./run-folm.sh`. *Optional:* `./make-shortcut.sh` adds it to your app menu.
+
+To build the AppImage yourself: `packaging/build-appimage.sh` (pinned, checksum-checked downloads; output in `dist/`).
+Pushing a `v*` tag builds it on GitHub and attaches it to a draft release.
 
 `python3 folm.py doctor` re-checks the system tools at any time. FOLM keeps its data (profiles, staged mods,
 backups) in `~/Games/FOLM` (set `FOLM_HOME` to use another folder). It changes nothing else on your PC
@@ -151,8 +164,9 @@ button gives FOLM a one-time download ticket.
 1. Connect once: **⚙ Settings → Nexus Mods account…** (or `python3 folm.py nexus-login`). Paste your
    *Personal API Key* from [nexusmods.com/settings/api-keys](https://www.nexusmods.com/settings/api-keys).
    It's stored only on this PC (owner-only file) and sent only to the Nexus API.
-2. Make FOLM the handler for Nexus links: `./make-shortcut.sh --nexus` (`--nexus-undo` gives links back to
-   whatever handled them before).
+2. FOLM offers to become the handler for Nexus links right after you connect. Change it any time in
+   **⚙ Settings → Open Nexus "Mod Manager Download" links in FOLM** (unticking gives links back to whatever
+   handled them before). From source, `./make-shortcut.sh --nexus` does the same.
 
 If FOLM is open, links go to that window; otherwise FOLM starts. Downloads are kept in
 `~/Games/FOLM/downloads/nexus/`, and each mod remembers its Nexus page and version. Collections aren't

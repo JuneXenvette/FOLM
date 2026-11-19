@@ -22,6 +22,15 @@ def is_rar(path):
         return False
 
 
+def seven_zip():
+    """The 7-Zip program to use: the copy inside FOLM's AppImage (FOLM_7Z), else the system's
+    (7zz is the official 7-Zip build, 7z is p7zip). None if there is none."""
+    bundled = os.environ.get("FOLM_7Z")
+    if bundled and os.path.isfile(bundled) and os.access(bundled, os.X_OK):
+        return bundled
+    return shutil.which("7zz") or shutil.which("7z")
+
+
 def _run(cmd):
     r = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
     msg = (r.stderr + r.stdout)
@@ -32,7 +41,10 @@ def _run(cmd):
 def extract(archive, dest):
     """Unpack archive into dest (created if needed). Raises ArchiveError with the reason."""
     os.makedirs(dest, exist_ok=True)
-    ok, msg = _run(["7z", "x", "-y", f"-o{dest}", archive])
+    sz = seven_zip()
+    if not sz:
+        raise ArchiveError("7-Zip is needed to unpack mods (package p7zip-full / 7zip)")
+    ok, msg = _run([sz, "x", "-y", f"-o{dest}", archive])
     if ok:
         return "7z"
     tried = ["7-Zip"]

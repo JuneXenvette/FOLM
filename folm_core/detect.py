@@ -45,7 +45,11 @@ BAIN_DIR_RE = re.compile(r"^\d{2,3}\s")
 def list_archive(path):
     """Return (files, dirs) inside an archive, as '/'-separated relative paths."""
     try:
-        out = subprocess.run(["7z", "l", "-ba", "-slt", path], capture_output=True,
+        from folm_core.archive import seven_zip
+    except ImportError:                     # run as a script from inside folm_core/
+        from archive import seven_zip
+    try:
+        out = subprocess.run([seven_zip() or "7z", "l", "-ba", "-slt", path], capture_output=True,
                              text=True, errors="replace", timeout=300)
     except FileNotFoundError:
         raise SystemExit("detect: the '7z' tool is required (package p7zip / 7zip)")

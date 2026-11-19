@@ -50,7 +50,13 @@ def missing():
     fam = family()
     out = []
     for cmds, why, required, pkgs in TOOLS:
-        ok = steam_present() if cmds == ("steam",) else all(shutil.which(c) for c in cmds)
+        if cmds == ("steam",):
+            ok = steam_present()
+        elif cmds == ("7z",):
+            from folm_core.archive import seven_zip       # the AppImage brings its own
+            ok = bool(seven_zip())
+        else:
+            ok = all(shutil.which(c) for c in cmds)
         if not ok:
             out.append({"tools": cmds, "why": why, "required": required, "package": pkgs.get(fam)})
     return out

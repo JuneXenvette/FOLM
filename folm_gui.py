@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from PySide6.QtNetwork import QLocalServer                                                     # noqa: E402
-from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, Signal, Slot, QUrl                   # noqa: E402
+from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, Signal, Slot, QUrl, qVersion                  # noqa: E402
 from PySide6.QtGui import QActionGroup, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPixmap, QShortcut      # noqa: E402
 from PySide6.QtWidgets import (                                         # noqa: E402
     QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
@@ -312,6 +312,12 @@ class Main(QMainWindow):
             self.setting_actions[key] = act
         self.settings_menu.addSeparator()
         self.settings_menu.addAction("Nexus Mods account…").triggered.connect(self.nexus_account)
+        self.nxm_action = self.settings_menu.addAction("Open Nexus \"Mod Manager Download\" links in FOLM")
+        self.nxm_action.setCheckable(True)
+        self.nxm_action.triggered.connect(self.toggle_nexus_links)
+        self.menu_action = self.settings_menu.addAction("Add FOLM to the app menu")
+        self.menu_action.triggered.connect(self.add_to_app_menu)
+        self.settings_menu.aboutToShow.connect(self.refresh_desktop_actions)
         self.settings_btn.setMenu(self.settings_menu)
         tb.addWidget(self.settings_btn)
 
@@ -1044,7 +1050,41 @@ class Main(QMainWindow):
             return False
         nexus.save_key(folm_home(), key.strip(), acc)
         self.say(f"Connected to Nexus Mods as {acc['name']} ({'Premium' if acc['premium'] else 'free account'}).")
+        from folm_core import desktop
+        if not desktop.handles_nexus() and QMessageBox.question(
+                self, APP_NAME, "Make the \"Mod Manager Download\" button on Nexus send mods to FOLM?\n\n"
+                "You can change this later in ⚙ Settings.") == QMessageBox.Yes:
+            self.toggle_nexus_links(True)
         return True
+
+    def refresh_desktop_actions(self):
+        from folm_core import desktop
+        self.nxm_action.setChecked(desktop.handles_nexus())
+        self.menu_action.setText("Update FOLM in the app menu" if desktop.in_menu() else "Add FOLM to the app menu")
+
+    def add_to_app_menu(self):
+        from folm_core import desktop
+        try:
+            exe = desktop.write_entries()
+        except OSError as e:
+            return QMessageBox.warning(self, APP_NAME, f"Couldn't add FOLM to the app menu: {e}")
+        self.say(f"FOLM is in your app menu (it starts {exe}).")
+
+    def toggle_nexus_links(self, on):
+        from folm_core import desktop
+        from folm_core.manager import home as folm_home
+        try:
+            if on:
+                desktop.take_nexus_links(folm_home())
+                ok = desktop.handles_nexus()
+                self.say("Nexus \"Mod Manager Download\" links now open in FOLM." if ok else
+                         "Couldn't set FOLM as the handler for Nexus links (xdg-mime is missing or failed).")
+            else:
+                old = desktop.give_back_nexus_links(folm_home())
+                self.say(f"Nexus links open in {old} again." if old else
+                         "No previous handler was recorded; Nexus links still open in FOLM.")
+        except OSError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
 
     def handle_nxm(self, url):
         from folm_core import nexus
@@ -1293,13 +1333,36 @@ def install_error_reporter():
     sys.excepthook = hook
 
 
+def self_test():
+    """For the AppImage build: Qt starts, FOLM's code loads, the bundled 7-Zip runs. Prints and exits."""
+    import importlib
+    import subprocess
+    for mod in ("manager", "desktop", "detect", "fomod", "wintool", "tools"):
+        importlib.import_module("folm_core." + mod)
+    from folm_core import archive, nexus
+    app = QApplication(sys.argv[:1])
+    sz = archive.seven_zip()
+    if not sz:
+        raise SystemExit("self-test: no 7-Zip")
+    ver = subprocess.run([sz, "i"], capture_output=True, text=True).stdout.splitlines()
+    print(f"FOLM {nexus.APP_VERSION}: Qt {qVersion()} ({app.platformName()}), Python {sys.version.split()[0]}, "
+          f"{next((v.strip() for v in ver if v.strip().startswith('7-Zip')), sz)}")
+
+
 def main():
+    if "--self-test" in sys.argv:
+        return self_test()
     if "--nxm" in sys.argv[:-1]:
         from folm_core import nexus
         from folm_core.manager import home as folm_home
         if nexus.send_to_running_app(folm_home(), sys.argv[sys.argv.index("--nxm") + 1]):
             return                                         # the open FOLM window takes it from here
     install_error_reporter()
+    try:
+        from folm_core import desktop
+        desktop.refresh()                  # a moved or newer AppImage: keep the app menu entry pointing here
+    except OSError:
+        pass
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")

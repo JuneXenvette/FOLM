@@ -1,0 +1,61 @@
+name: Release
+
+# Pushing a tag like v1.1.0 (or v1.1.0-rc1 for a test) builds the AppImage and puts it, with its
+# checksum, on a DRAFT release: nothing is public until you press "Publish release" on GitHub.
+# "Run workflow" on the Actions tab builds it too, without a release (download it from the run).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04          # older libraries than 24.04 = the AppImage runs on more distros
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Libraries and tools the build needs
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-util1 libxkbcommon-x11-0 libegl1 libgl1 libfontconfig1 libdbus-1-3
+
+      - name: Version
+        id: v
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="$(git rev-parse --short HEAD)"; fi
+          app="$(sed -n 's/^APP_NAME, APP_VERSION = "FOLM", "\(.*\)".*/\1/p' folm_core/nexus.py)"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${v%%-*}" != "$app" ]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match APP_VERSION $app in folm_core/nexus.py (Nexus needs them equal)"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: packaging/build-appimage.sh "${{ steps.v.outputs.version }}"
+
+      - name: The AppImage starts
+        run: |
+          A="dist/FOLM-${{ steps.v.outputs.version }}-x86_64.AppImage"
+          QT_QPA_PLATFORM=offscreen APPIMAGE_EXTRACT_AND_RUN=1 "$A" --self-test
+          APPIMAGE_EXTRACT_AND_RUN=1 "$A" --cli --help > /dev/null
+
+      - name: Keep the build (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FOLM-${{ steps.v.outputs.version }}-AppImage
+          path: dist/*
+
+      - name: Draft release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          name: FOLM ${{ steps.v.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
