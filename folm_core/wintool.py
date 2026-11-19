@@ -247,7 +247,8 @@ def run(exe, tool_dir, job, game_dir, other_games, prefix, wine, proton_dir, arg
     cmd = sandbox_cmd(script, game_dir, upper, work, rw, ro)
     log(f"  running {os.path.basename(exe)} with Wine (sandboxed: no network; your game folder is protected)")
     started = time.time()
-    r = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                       stdin=subprocess.DEVNULL)      # "Press any key to continue" returns at once
     try:
         os.remove(o_drive)
     except OSError:

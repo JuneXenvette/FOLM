@@ -132,8 +132,11 @@ def classify(files, dirs, source_name=""):
         r["type"] = "exe-installer"
         return r
     if any(f.endswith(".mpi") for f in low_files) and any(f.endswith(".exe") for f in low_files):
-        r["type"] = "ttw-installer"
-        r["notes"] = "Tale of Two Wastelands installer: run the .exe in the Wine sandbox with game paths in the registry"
+        # the installer framework TTW uses; the ESM patchers and BSA decompressors use it too
+        is_ttw = any(re.search(r"\bttw\b|tale of two wastelands", x) for x in low_files + [source_name.lower()])
+        r["type"] = "ttw-installer" if is_ttw else "exe-installer"
+        r["notes"] = ("Tale of Two Wastelands installer" if is_ttw else "Windows installer") + \
+            ": FOLM runs it with Wine and turns its output into a mod"
         return r
 
     # Source code only (e.g. "Enhanced Camera Source"): nothing for the game
@@ -185,7 +188,8 @@ def classify(files, dirs, source_name=""):
                        and not k.endswith(DOC_EXTS))
         if data_root is None and roots:
             r["type"] = "game-root"
-            r["game_root_files"] = sorted(v for k, v in kids.items() if not k.endswith(DOC_EXTS))
+            r["game_root_files"] = sorted(v for k, v in kids.items() if not k.endswith(DOC_EXTS)
+                                          and k not in ("src", "source", "sources"))   # e.g. FOSE ships its source
         elif data_root is not None:
             r["type"] = "data+game-root" if r["game_root_files"] or roots else "data"
             r["data_root"] = data_root
