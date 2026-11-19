@@ -10,8 +10,9 @@ The game runs through Steam and Proton as usual. FOLM installs mods, puts them i
 load order, applies the Proton-specific fixes these games need, and tells you in plain words when something
 is wrong. No Wine knowledge needed.
 
-Proven on a real setup: TTW 3.4 with about 50 mods (31 plugins, 18 script extender plugins, Vegas Shaders
-with its DXVK build, NV SMP, BOG, EVE Lite), all installed and launched from FOLM on Linux.
+Proven on real setups: TTW 3.4 with about 50 mods (31 plugins, 18 script extender plugins, Vegas Shaders
+with its DXVK build, NV SMP, BOG, EVE Lite), and Fallout 3 with FOSE, the Anniversary Patcher, the BSA
+Decompressor, the ESM Patcher and the Unofficial Patch, all installed and launched from FOLM on Linux.
 
 ## Status: provided as-is
 
@@ -21,9 +22,9 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
 
 | | |
 |---|---|
-| ✅ Tested | Linux Mint 22 (Cinnamon, X11), Steam + Proton 10 / GE-Proton, New Vegas + TTW 3.4, AMD GPU (RADV) |
+| ✅ Tested | Linux Mint 22 (Cinnamon, X11), Steam + Proton 10 / GE-Proton, New Vegas + TTW 3.4, Fallout 3 GOTY + FOSE, AMD GPU (RADV) |
 | ❓ Not tested | Wayland, other distros (should work), NVIDIA, Steam Deck, Flatpak Steam |
-| ⚠️ Barely tested | **Wanderer edition (Fallout 3 on its own)**: it shares the engine, but hasn't had a full playthrough |
+| ⚠️ Lightly tested | Fallout 3 beyond the start of the game (no long playthrough yet); xEdit and xLODGen from the Tools tab (built and unit-tested, not yet tried on a real game) |
 | ❌ Not supported yet | BAIN wizard scripts (`wizard.txt`; plain BAIN packages work), Nexus Collections, update checks, the FO3 → NV converter (only its check report works) |
 
 ## What it does
@@ -44,11 +45,14 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
   instant), case problems (`Textures` vs `textures`) are merged away, and **Undeploy** puts the game folder
   back exactly as it was.
 - **Load order:** plugins are always sorted after their masters, with **LOOT's** community rules built in.
-  LOOT warnings you've already dealt with can be **marked as handled**.
+  LOOT warnings you've already dealt with can be **marked as handled**; links in LOOT's messages (like a missing
+  mod's page) open or copy with a right-click.
 - **Profiles:** separate mod setups sharing one library, each with **its own saves**.
-- **Checks before ▶ Play:** mods deployed, 4GB patch still applied, xNVSE present, missing masters,
+- **Already installed?** Installing the same file twice (or another version of an installed mod) asks first:
+  skip it, update/replace it keeping its place and notes, or keep both.
+- **Checks before ▶ Play:** mods deployed, 4GB patch still applied, xNVSE / FOSE present, missing masters,
   LOOT errors, saves that need mods you turned off.
-- **🩺 Health check and requirement scan:** confirms mods actually loaded (from xNVSE's log), and finds
+- **🩺 Health check and requirement scan:** confirms mods actually loaded (from xNVSE's or FOSE's log), and finds
   hidden requirements by reading each plugin's own startup checks plus the mod's Nexus requirement list.
 - **Proton fixes, automatic:** Wine DLL overrides for "proxy DLL" mods (NVHR and friends), DXVK builds,
   an FPS cap in `dxvk.conf`, borderless window, read-only INIs kept read-only, archive invalidation.
@@ -58,7 +62,7 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
   runs TTW's own installer (with the Linux speed fix `-NoOggEnc2`), and the result becomes a mod sorted in TTW's
   official order. FOLM can also build a Readius patch for TTW 3 from your own copy of Readius. FOLM never
   bundles or re-hosts TTW.
-- **GECK under Proton** for mod makers: opens with your mods loaded and turns what you save into a mod.
+- **GECK under Proton** for mod makers (Tools tab): opens with your mods loaded and turns what you save into a mod.
 - **Tools tab:** GECK, FNVEdit/FO3Edit (xEdit) and xLODGen. Installed tools open with your mods loaded; missing
   ones are greyed out with a link to get them. Drop a tool's download on FOLM to add it. What xEdit saves becomes
   the mod "xEdit output", what xLODGen builds becomes "Generated LOD" (xEdit's backups are kept aside).
@@ -98,6 +102,7 @@ except the game folder while mods are deployed, and the game's INI files (backed
    **Library** tab and double-click. Or use Nexus's Mod Manager Download button.
 2. **Tick** the mods you want and press **▶ Play**. FOLM deploys, sorts, checks and starts the game.
 3. Something wrong? Run **🩺 Health check**. After a crash, FOLM offers a crash report.
+4. Modding tools (GECK, xEdit, xLODGen) are in the **Tools** tab.
 
 Start with the essentials in [docs/recommended-mods.md](docs/recommended-mods.md) (xNVSE, 4GB patch,
 JIP LN, NVTF and friends).
@@ -122,7 +127,7 @@ mod file → DETECT its type → INSTALL into its own staging folder (case-fixed
 
 ## Making mods
 
-Mod makers: FOLM opens the GECK with your mods loaded and turns what you save into a managed mod. See **[Making mods on Linux](MODDING-ON-LINUX.md)**.
+Mod makers: FOLM opens the GECK (Tools tab) with your mods loaded and turns what you save into a managed mod. See **[Making mods on Linux](MODDING-ON-LINUX.md)**.
 
 ## Archive invalidation
 

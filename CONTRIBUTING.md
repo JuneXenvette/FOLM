@@ -68,7 +68,7 @@ These kept FOLM safe and pleasant to use; please keep them.
   `docs/compatibility.md` helps the next player.
 - **Fallout 3 (Wanderer edition):** FOSE, the Windows patchers and UF3P are tested (docs/compatibility.md); more FO3 mods and a long play session would help.
 - **Wayland:** the borderless-window fix uses X11 tools; under Wayland the game runs but that fix doesn't.
-- **Update checks** for Nexus mods, and "replace / update" when installing a mod that's already staged.
+- **Update checks** for Nexus mods (installing a newer file already offers "Update").
 - **xEdit Quick Auto Clean** from LOOT's "dirty plugin" warnings (a "Clean it" button), and testing
   xLODGen's output in game: the Tools tab runs both, but neither is tested on a real game yet.
 - **Packaging:** AppImage or Flatpak so players don't need the Python setup.

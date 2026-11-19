@@ -4,11 +4,11 @@ Every mod tested with FOLM on Linux (Steam + Proton). "Installs" = FOLM staged i
 with no manual steps. "In game" = confirmed working after launch.
 
 Test setup: Linux Mint (Cinnamon, X11), Fallout: New Vegas (Steam, all DLC),
-Fallout 3 GOTY, GE-Proton10-34, FOLM v0.3.
+Fallout 3 GOTY, GE-Proton10-34, FOLM v0.3 (New Vegas/TTW) and v0.4 (Fallout 3).
 
 | Mod | Version | Source | FOLM type | Installs | In game | Notes |
 |---|---|---|---|---|---|---|
-| Tale of Two Wastelands | 3.4 | mod.pub | ttw-installer | ✅ (Wine sandbox, `-NoOggEnc2`, ~21 min) | ✅ loads | Installer needs game paths in the sandbox registry; `proton run` fails silently, Proton's wine works |
+| Tale of Two Wastelands | 3.4 | mod.pub | ttw-installer | ✅ (Wine sandbox, `-NoOggEnc2`, ~21 min; built with v0.3's runner, before it moved into `wintool.py`) | ✅ loads | Installer needs game paths in the sandbox registry; `proton run` fails silently, Proton's wine works |
 | YUPTTW | 13.9.1 | mod.pub | data | ✅ | ✅ loads | Load after TTW; wins 5 files over TTW |
 | xNVSE | 6.4.9 | GitHub | data+game-root | ✅ | ✅ (nvse.log) | Root files placed next to FalloutNV.exe automatically |
 | FNV 4GB Patcher (for Proton) | 1.5 | Nexus 62552 | tool | n/a (run manually) | ✅ flag set | Native Linux binary; drops the exe's executable bit (FOLM restores it). TTW still warned "not 4GB patched" before its required plugins were installed — recheck |
