@@ -244,6 +244,12 @@ def check(m, online=None, only=None):
     mods = m.mods()
     enabled = [x for x in mods if x.get("enabled")]
     out, seen = [], set()
+    ext = []
+
+    def has_extender():                     # looked up once per check (it may walk every mod's files)
+        if not ext:
+            ext.append(_has_xnvse(m))
+        return ext[0]
 
     # 1 + 2: script extender plugins, from the deployed Plugins folder and each enabled mod's own files
     pdir = dep.exists_ci(m.data_dir, f"{EXTENDER[m.edition][0]}/Plugins")
@@ -296,11 +302,12 @@ def check(m, online=None, only=None):
         done_ids.add(i)
         for r in reqs.get(i, []):
             rid = r["mod_id"]
-            if rid and rid in SPECIAL.get(domain, {}) and SPECIAL[domain][rid](m):
+            test = SPECIAL.get(domain, {}).get(rid) if rid else None
+            if test and (has_extender() if test is _has_xnvse else test(m)):
                 continue
             if WINDOWS_RUNTIME.search(r["name"]):
                 continue                    # Visual C++ / DirectX runtimes: Proton provides them
-            if _is_extender(r["name"]) and _has_xnvse(m):
+            if _is_extender(r["name"]) and has_extender():
                 continue
             have = _best_named(by_id.get(rid, []), r["name"]) if rid else []
             if not have:

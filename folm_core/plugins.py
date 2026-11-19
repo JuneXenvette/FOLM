@@ -69,7 +69,6 @@ def sort_plugins(plugins, preferred, edition="courier", extra_after=None, group_
     group_rank goes first (LOOT groups), then the vanilla order, then `preferred`
     (the player's order), then name.
     """
-    import heapq
     extra_after = extra_after or {}
     group_rank = group_rank or {}
     lower = {n.lower(): n for n in plugins}

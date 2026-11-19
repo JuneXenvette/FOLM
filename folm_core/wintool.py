@@ -277,8 +277,9 @@ def run(exe, tool_dir, job, game_dir, other_games, prefix, wine, proton_dir, arg
         pass
     remove_tree(work)
     err = (r.stderr or "").strip()
-    if r.returncode != 0 and ("mount" in err.lower() or "bwrap:" in err):
-        raise ToolError("couldn't set up the sandbox: " + err.splitlines()[-1][:300])
+    setup_err = [l for l in err.splitlines() if re.match(r"^(bwrap|unshare|mount|sh): ", l)]
+    if r.returncode != 0 and setup_err:                 # the sandbox itself failed (not the tool)
+        raise ToolError("couldn't set up the sandbox: " + setup_err[-1][:300])
     log(f"  {os.path.basename(exe)} finished after {int(time.time() - started)} s (exit code {r.returncode})")
     tail = [l for l in (r.stderr or "").splitlines() + (r.stdout or "").splitlines() if l.strip()][-8:]
     if r.returncode not in (0,) and tail:

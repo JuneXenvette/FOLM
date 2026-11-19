@@ -6,7 +6,6 @@ Run:  .venv/bin/python folm_gui.py            (FOLM_HOME env var picks another d
 
 import os
 import re
-import subprocess
 import sys
 import threading
 import traceback
@@ -16,7 +15,7 @@ sys.path.insert(0, HERE)
 
 from PySide6.QtNetwork import QLocalServer                                                     # noqa: E402
 from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, Signal, Slot, QUrl                   # noqa: E402
-from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPixmap, QShortcut      # noqa: E402
+from PySide6.QtGui import QActionGroup, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPixmap, QShortcut      # noqa: E402
 from PySide6.QtWidgets import (                                         # noqa: E402
     QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView, QRadioButton, QScrollArea,
@@ -864,16 +863,18 @@ class Main(QMainWindow):
             return
         from folm_core import detect
         try:
-            is_tool = detect.detect(path).get("type") == "tool"
+            found = detect.detect(path)                # once: the install reuses it
         except Exception:
-            is_tool = False
-        if is_tool:                                    # xEdit / xLODGen: no mod name to ask for
-            self.run(self.m.install, path, None, self.bridge.chooser, then=self._installed)
+            found = None
+
+        def go(path, name, chooser, log=None):
+            return self.m.install(path, name, chooser, log=log or (lambda *a: None), detected=found)
+        if found and found.get("type") == "tool":      # xEdit / xLODGen: no mod name to ask for
+            self.run(go, path, None, self.bridge.chooser, then=self._installed)
             return
         name, ok = QInputDialog.getText(self, "Install mod", "Name for this mod:", text=Manager.guess_name(path))
         if ok and name.strip():
-            self.run(self.m.install, path, name.strip(), self.bridge.chooser,
-                     then=self._installed)
+            self.run(go, path, name.strip(), self.bridge.chooser, then=self._installed)
 
     def _installed(self, r):
         if r[1].get("type") == "tool":

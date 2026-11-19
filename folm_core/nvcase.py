@@ -10,7 +10,6 @@ collisions and, with --fix, merges them safely with an undo log.
 import argparse
 import json
 import os
-import shutil
 import sys
 import time
 from collections import defaultdict

@@ -12,7 +12,6 @@ import subprocess
 import struct
 import tempfile
 import time
-import glob
 
 from . import archive as archive_mod, deploy as dep, detect, fomod, loadorder
 
@@ -232,18 +231,27 @@ class Manager:
         base = os.path.basename(archive).lower()
         nid = requires.nexus_id({"source": archive})
         stem = self._file_stem(archive)
-        hits = []
+        hits, learned = [], False
         profiles = sorted(self.data["profiles"].items(), key=lambda kv: kv[0] != self.active)
         for prof, p in profiles:
             for mod in p["mods"]:
                 src = mod.get("source") or ""
                 if not src:
                     continue
-                if (fp and mod.get("source_fp") == fp) or os.path.basename(src).lower() == base or \
-                        (fp and not mod.get("source_fp") and os.path.exists(src) and self.file_fingerprint(src) == fp):
+                known = mod.get("source_fp")
+                if not known and os.path.exists(src):        # installed before fingerprints: learn it once
+                    known = mod["source_fp"] = self.file_fingerprint(src)
+                    learned = learned or bool(known)
+                if fp and known:
+                    same = known == fp                       # both known: the contents decide, not the name
+                else:
+                    same = os.path.basename(src).lower() == base
+                if same:
                     hits.append(("same", prof, mod))
                 elif nid and requires.nexus_id(mod) == nid and self._file_stem(src) == stem:
                     hits.append(("version", prof, mod))
+        if learned:
+            self.save()
         return hits
 
     def _free_name(self, name):
@@ -252,14 +260,14 @@ class Manager:
             n, i = f"{name} ({i})", i + 1
         return n
 
-    def install(self, archive, name=None, chooser=None, log=_quiet):
+    def install(self, archive, name=None, chooser=None, log=_quiet, detected=None):
         """Stage a mod (see _install), then say what it needs that isn't installed.
 
         If the same file (or another version of it) is already installed, asks first via the chooser:
         same file -> don't install again (or reinstall / second copy); other version -> update (or keep both)."""
         self.need()
         try:
-            r = detect.detect(archive)
+            r = detected or detect.detect(archive)
         except (ValueError, OSError):
             r = {}
         if r.get("type") == "tool":
@@ -305,9 +313,9 @@ class Manager:
             else:                                             # second copy / keep both
                 name = self._free_name(name or self.guess_name(archive))
         if replace is None:
-            result = self._install(archive, name, chooser, log)
+            result = self._install(archive, name, chooser, log, detected=r or None)
         else:
-            result = self._replace(replace, archive, chooser, log)
+            result = self._replace(replace, archive, chooser, log, detected=r or None)
         entry = next((x for x in self.cur["mods"] if x["name"] == result[0]), None)
         if entry is not None:
             entry["source_fp"] = self.file_fingerprint(archive)
@@ -321,7 +329,7 @@ class Manager:
             log(f"  (couldn't check its requirements: {e})")
         return result
 
-    def _replace(self, old, archive, chooser, log):
+    def _replace(self, old, archive, chooser, log, detected=None):
         """Install `archive` in place of the staged mod `old` (update / reinstall). The old files are kept
         aside until the new install has worked; every profile that lists the mod gets the new files."""
         name = old["name"]
@@ -334,7 +342,7 @@ class Manager:
         if pos is not None:
             self.cur["mods"].pop(pos)
         try:
-            result = self._install(archive, name, chooser, log)
+            result = self._install(archive, name, chooser, log, detected=detected)
         except Exception:
             if os.path.isdir(aside):
                 if os.path.isdir(dest):
@@ -357,7 +365,7 @@ class Manager:
         log(f"  replaced '{name}' with {os.path.basename(archive)}")
         return result
 
-    def _install(self, archive, name=None, chooser=None, log=_quiet):
+    def _install(self, archive, name=None, chooser=None, log=_quiet, detected=None):
         """Stage a mod from an archive. Returns (name, detect_result).
 
         FOMOD (XML) mods need a chooser(step, group) -> [option indexes]; without one,
@@ -365,7 +373,7 @@ class Manager:
         """
         self.need()
         try:
-            r = detect.detect(archive)
+            r = detected or detect.detect(archive)
         except ValueError:
             raise FolmError(f"{os.path.basename(archive)} isn't a mod archive FOLM can open "
                             "(mods come as .7z, .zip, .rar, .fomod or .exe files).")
@@ -562,7 +570,7 @@ class Manager:
         work = os.path.join(home(), "work")
         os.makedirs(work, exist_ok=True)
         job = tempfile.mkdtemp(prefix="tool-", dir=work)
-        was_deployed = self.deployed
+        was_deployed, taken_out = self.deployed, False
         try:
             tool = os.path.join(job, "tool")
             os.makedirs(tool)
@@ -612,6 +620,7 @@ class Manager:
             if was_deployed:
                 log("  taking your mods out of the game while it runs")
                 self.undeploy(log=_quiet)
+                taken_out = True
             game_dir = self.data["game_dir"]
             others = self.other_game_dirs()
             reg = {"HKLM\\Software\\Bethesda Softworks\\" + ("FalloutNV" if self.edition == "courier" else "Fallout3"):
@@ -628,7 +637,7 @@ class Manager:
                 raise FolmError(str(e))
         finally:
             wintool.remove_tree(job)
-            if was_deployed:
+            if taken_out:
                 try:
                     self.deploy(log=_quiet)
                 except Exception as e:
@@ -1370,8 +1379,9 @@ class Manager:
             self.mod(edit_mod)
         exe = self.geck_path()
         if not exe and runner is None:
-            raise FolmError("GECK isn't installed. In Steam: Library > Tools > "
-                            "'Fallout New Vegas: Garden of Eden Creation Kit' (it installs into the game folder).")
+            raise FolmError("GECK isn't installed. In Steam: Library > Tools > " + (
+                            "'Fallout 3 Garden of Eden Creation Kit'" if self.edition == "wanderer" else
+                            "'Fallout New Vegas: Garden of Eden Creation Kit'") + " (it installs into the game folder).")
         if not self.deployed:
             self.deploy(log)
         self._geck_ini()
@@ -1385,8 +1395,9 @@ class Manager:
                 wine, _ = wintool.find_wine([STEAM, os.path.expanduser("~/.steam/steam")], steam_libraries())
             except wintool.ToolError as e:
                 raise FolmError(f"to run GECK, {e}")
-            loader = os.path.join(g, "nvse_loader.exe")
-            cmd = [wine, "nvse_loader.exe", "-editor"] if os.path.exists(loader) else [wine, os.path.basename(exe)]
+            from .requires import LOADERS
+            name = next((f for f in os.listdir(g) if f.lower() == LOADERS[self.edition]), None)
+            cmd = [wine, name, "-editor"] if name else [wine, os.path.basename(exe)]   # with xNVSE / FOSE
             env = dict(os.environ, WINEPREFIX=os.path.join(self.data["prefix"], "pfx"), WINEDEBUG="-all")
             log("Opening GECK (close it when you're done; FOLM will collect what you saved)...")
             subprocess.Popen(cmd, cwd=g, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).wait()
@@ -1465,6 +1476,44 @@ class Manager:
         log(f"Installed the tool {name}. Open it from the Tools tab.")
         return name, {"type": "tool", "tool": tool_id, "warnings": []}
 
+    def _guard_game_plugins(self, keep):
+        """Copy the game's own plugins (Fallout3.esm, the DLC ESMs...: not deployed by FOLM) aside before a
+        tool that can save over them runs (xEdit cleaning a DLC). Returns {name: (copy, stat)}."""
+        ours = set()
+        if os.path.exists(self.manifest):
+            with open(self.manifest) as fh:
+                ours = {os.path.normpath(r["target"]) for r in json.load(fh).get("files", [])}
+        saved = {}
+        for f in os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else []:
+            p = os.path.join(self.data_dir, f)
+            if f.lower().endswith((".esm", ".esp")) and os.path.isfile(p) and not os.path.islink(p) \
+                    and os.path.normpath(p) not in ours:
+                os.makedirs(keep, exist_ok=True)
+                shutil.copy2(p, os.path.join(keep, f))      # a copy, not a link: a tool may write in place
+                saved[f] = (os.path.join(keep, f), os.stat(p))
+        return saved
+
+    def _restore_game_plugins(self, saved, target, log=_quiet):
+        """Game plugins a tool changed: the changed version goes into the tool's mod `target`, the original
+        goes back into the game folder (so turning the mod off undoes the change). Returns how many."""
+        n = 0
+        for f, (copy, st) in saved.items():
+            p = os.path.join(self.data_dir, f)
+            now = os.stat(p) if os.path.exists(p) else None
+            if now and (now.st_ino, now.st_size, now.st_mtime_ns) == (st.st_ino, st.st_size, st.st_mtime_ns):
+                continue
+            if now:
+                d = os.path.join(target, f)
+                os.makedirs(target, exist_ok=True)
+                if os.path.lexists(d):
+                    os.remove(d)
+                shutil.move(p, d)
+                n += 1
+            shutil.move(copy, p)
+            log(f"  {f} (a game file) was changed: the new version is in {os.path.basename(target)!r}, "
+                "the original is back in the game folder")
+        return n
+
     def run_tool(self, tool_id, log=_quiet, runner=None):
         """Run xEdit or xLODGen on this profile's mods (deployed first). What it saves becomes a mod:
         "xEdit output" / "Generated LOD" (made, or added to, and enabled). Returns that mod's name or None."""
@@ -1485,6 +1534,7 @@ class Manager:
         out = os.path.join(work, "output")
         os.makedirs(out)
         try:
+            saved = self._guard_game_plugins(os.path.join(work, "game-plugins"))
             if runner:
                 runner(out)
             else:
@@ -1512,7 +1562,8 @@ class Manager:
                             os.makedirs(os.path.dirname(os.path.join(dest, rel)), exist_ok=True)
                             shutil.move(os.path.join(self.data_dir, d, rel), os.path.join(dest, rel))
                         shutil.rmtree(os.path.join(self.data_dir, d), ignore_errors=True)
-            got = self._catch_into(target, log)
+            got = self._restore_game_plugins(saved, target, log)
+            got += self._catch_into(target, log)
             for rel in dep.walk_rel(out):
                 d = os.path.join(target, rel)
                 os.makedirs(os.path.dirname(d), exist_ok=True)

@@ -321,10 +321,27 @@ class InstallerKinds(Temp):
                 fh.write("fixed")
             os.makedirs(os.path.join(self.game, "Data", "FO3Edit Backups"))
             open(os.path.join(self.game, "Data", "FO3Edit Backups", "Fixed.esp.bak"), "w").close()
-        got = self.m.run_tool("xedit", runner=fake_xedit)
+        esm = os.path.join(self.game, "Data", "Anchorage.esm")            # a game file xEdit will "clean"
+        with open(esm, "w") as fh:
+            fh.write("vanilla")
+        self.m.undeploy()
+        self.m.deploy()                                                       # (part of the game, not a mod)
+
+        def fake_xedit2(out):
+            fake_xedit(out)
+            tmp = esm + ".save"
+            with open(tmp, "w") as fh:
+                fh.write("cleaned")
+            os.replace(tmp, esm)                                              # xEdit saves by renaming over
+        got = self.m.run_tool("xedit", runner=fake_xedit2)
         self.assertEqual(got, "xEdit output")
         d = os.path.join(self.m.mods_dir, got)
-        self.assertEqual(sorted(os.listdir(d)), ["Fixed.esp"])                      # backups kept aside
+        self.assertEqual(sorted(os.listdir(d)), ["Anchorage.esm", "Fixed.esp"])     # backups kept aside
+        with open(os.path.join(d, "Anchorage.esm")) as fh:
+            self.assertEqual(fh.read(), "cleaned")
+        self.m.undeploy()
+        with open(esm) as fh:
+            self.assertEqual(fh.read(), "vanilla")                                   # the game file is back
         self.assertTrue(self.m.mod(got)["enabled"])
         self.assertTrue(os.path.exists(os.path.join(tools.tools_dir(os.environ["FOLM_HOME"], "xedit"),
                                                     "FOLM backups", "wanderer", "FO3Edit Backups", "Fixed.esp.bak")))
@@ -360,6 +377,12 @@ class InstallerKinds(Temp):
         with self.assertRaises(FolmError) as e:                       # same file again, under another name
             self.m.install(v1, "Cool Mod - ENG")
         self.assertIn("already installed as 'Cool Mod'", str(e.exception))
+        other = os.path.join(self.tmp, "elsewhere")                    # same file name, different contents
+        os.makedirs(other)
+        with zipfile.ZipFile(os.path.join(other, os.path.basename(v1)), "w") as zf:
+            zf.writestr("Other.esp", "not the same mod")
+        kinds = [k for k, _p, _m in self.m.find_duplicates(os.path.join(other, os.path.basename(v1)))]
+        self.assertNotIn("same", kinds)                                 # the contents decide, not the name
         name2, _ = self.m.install(v1, "Cool Mod", chooser=pick("Install a second copy"))
         self.assertEqual(name2, "Cool Mod (2)")
         self.m.remove(name2)
