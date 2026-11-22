@@ -1,0 +1,85 @@
+# FOLM mod list: open it in FOLM (Settings > Install a mod list) and point it at your downloads.
+#
+# The LOD resources from the Viva New Vegas LOD guide (https://vivanewvegas.moddinglinked.com/lod.html),
+# with its Tale of Two Wastelands changes, plus the NMC patches for players who use NMC's Texture Pack.
+# Download every file below with Nexus's "Manual download" button. After installing: generate LOD with
+# xLODGen (beta 130 or newer), then turn off High Priority Core and High Priority Trees - Vanilla.
+folm_list: 1
+name: TTW LOD (Viva New Vegas guide)
+edition: courier
+about: >-
+  Distant-view (LOD) resources for Tale of Two Wastelands, from the Viva New Vegas LOD guide. Install them
+  below every other mod (texture packs like NMC must not override them), then generate LOD with xLODGen.
+mods:
+  - file: LOD Fixes and Improvements - NVSE
+    nexus: 84171
+  - file: LOD Fixes and Improvements - INI
+    nexus: 84171
+  - file: Much Needed LOD
+    nexus: 64805
+    remove: [MuchNeededLOD.esp, meshes/effects]
+  - file: Much Needed LOD - NMC Patch
+    nexus: 64805
+    note: Only if you use NMC's Texture Pack (not in the VNV guide).
+  - file: Much Needed LOD fixed rocks color
+    nexus: 81524
+  - file: LODadditions
+    nexus: 61206
+    remove: [tmzLODadditions.esp]
+  - file: FNV LOD Supplementation
+    nexus: 72099
+    match: "*-0-*"
+  - file: FNV LOD Supplementation
+    nexus: 72099
+    name: FNV LOD Supplementation - Optional Overpasses
+    match: "*Overpass*"
+  - file: TCM's LOD Overhaul
+    nexus: 70155
+  - file: More LODs Additions and fixes
+    nexus: 81751
+  - file: More LODs NMC Satellite dish lod patch
+    nexus: 81751
+    note: Only if you use NMC's Texture Pack (not in the VNV guide).
+  - file: Curated Rock LOD
+    nexus: 97376
+  - file: Different LOD mods little tweaks and additions
+    nexus: 81981
+  - file: Tales Of the Wanted Lods
+    nexus: 84165
+    name: LODIFY
+    remove: [TTWLods.esp, LODIFY_FNV.esp]
+  - file: LODIFY FNV Wall_SoGB Editon
+    nexus: 84165
+    remove: [TTWLods.esp, LODIFY_FNV.esp]
+  - file: Decent LOD Kit
+    nexus: 88979
+    remove: [Decent LOD Kit.esp]
+  - file: TTW Fallout 3 LOD
+    nexus: 90327
+  - file: Physically Based LOD
+    nexus: 93393
+  - file: Nuclear Core
+    nexus: 88902
+    remove: [Nuclear_LOD.esp, TreeLOD_Vanilla.esp]
+  - file: Nuclear Core - NMC Patch
+    nexus: 88902
+    note: Only if you use NMC's Texture Pack (not in the VNV guide).
+  - file: Nuclear Trees - Vanilla
+    nexus: 88902
+    remove: [Nuclear_LOD.esp, TreeLOD_Vanilla.esp]
+  - file: VNV LOD Guide Plugins Merge
+    nexus: 79358
+  - file: High Priority Core - without NVMIM
+    nexus: 88898
+    name: High Priority Core
+    note: Only needed while generating LOD. Turn it off afterwards (on again before generating again).
+  - file: High Priority Trees - Vanilla
+    nexus: 88898
+    note: Only needed while generating LOD. Turn it off afterwards (on again before generating again).
+  - file: Wasted DC
+    nexus: 79734
+    name: Wasted LOD - Cliffs of DC
+  - file: RubbleBlockade LOD Fixed
+    nexus: 94042
+  - file: High Priority LOD - TTW
+    nexus: 88898

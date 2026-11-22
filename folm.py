@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""folm - The FOLM Project command-line mod manager (v1.1.1).
+"""folm - The FOLM Project command-line mod manager (v1.2.0).
 
 Setup
   folm.py init                        find the game and its Proton prefix
@@ -26,6 +26,10 @@ Game
   folm.py set archive-invalidation on|off   loose mod files override the game's archives (default on)
   folm.py play [--no-watch]           launch through Steam; FOLM watches and writes a crash report
   folm.py crash-report                rebuild the report for the last play session (e.g. after a freeze)
+Mod lists (.folmlist: which downloads to install, in what order)
+  folm.py modlist check LIST [--from DIR]    which of the list's downloads are in DIR (default ~/Downloads)
+  folm.py modlist install LIST [--from DIR]  install the ones that are there, in the list's order
+  folm.py modlist save LIST [--name N]       save this profile as a list (names, links, settings; no files)
 Making mods
   folm.py geck [--edit MOD]           open GECK with your mods; collect what you save when it closes
   folm.py keep NAME                   turn what you saved (Overwrite) into a new mod called NAME
@@ -175,9 +179,18 @@ def cmd_profile(a, m):
         print(f"Active profile: {a.name!r}")
         if r:
             print(f"Load order set: {len(r['active'])} active plugin(s) of {len(r['order'])}.")
+    elif a.action == "rename":
+        if not a.new_name:
+            raise FolmError("give the new name: profile rename OLD NEW")
+        m.rename_profile(a.name, a.new_name, log=print)
+        print(f"Renamed profile {a.name!r} to {a.new_name!r}.")
     elif a.action == "delete":
-        m.delete_profile(a.name)
+        saves, kept = m.delete_profile(a.name)
         print(f"Deleted profile {a.name!r} (its mods stay in the shared library).")
+        if saves:
+            print(f"Its saves are still in {saves}")
+        if kept:
+            print(f"Files it caught are now the staged mod {kept!r}.")
 
 
 def cmd_deploy(a, m):
@@ -331,6 +344,12 @@ def cmd_health(a, m):
     return 1 if any(f["status"] == "error" for f in findings) else 0
 
 
+def cmd_updates(a, m):
+    from folm_core import updates
+    updates.check(m, log=print)
+    return 0
+
+
 def cmd_requires(a, m):
     from folm_core import requires
     items = requires.check(m, online=not a.offline, only=a.mod)
@@ -404,8 +423,45 @@ def cmd_convert_check(a, m):
     print(json.dumps(rep, indent=1) if a.json else fo3convert.format_report(rep))
 
 
+def cmd_modlist(a, m):
+    from folm_core import modlist
+    m.need()
+    try:
+        if a.action == "save":
+            path, lst, left_out = modlist.save(m, a.file, a.name)
+            print(f"Saved {len(lst['mods'])} mod(s) from profile {m.active!r} to {path}")
+            if left_out:
+                print("  Not in the list (they didn't come from a downloaded file): " + ", ".join(left_out))
+            return
+        lst = modlist.load(a.file)
+        folder = os.path.expanduser(a.source)
+        if a.action == "check":
+            rows = modlist.status(m, lst, folder)
+            print(f"{lst['name']}: {len(rows)} mod(s), looking in {folder}")
+            for i, r in enumerate(rows, 1):
+                e = r["entry"]
+                mark = {"installed": "✔ installed", "ready": "● ready", "missing": "✖ missing"}[r["state"]]
+                extra = f"as {r['installed_as']!r}" if r["state"] == "installed" and r["installed_as"] != e["name"] \
+                    else os.path.basename(r["file"]) if r["state"] == "ready" else (r["link"] or "")
+                print(f"  {i:2}. {mark:12} {e['name']}  {extra}".rstrip())
+            counts = {s: sum(r["state"] == s for r in rows) for s in ("installed", "ready", "missing")}
+            print(f"{counts['ready']} ready to install, {counts['missing']} missing, {counts['installed']} already installed.")
+            return 1 if counts["missing"] else 0
+        chooser = None if a.auto else terminal_chooser
+        done, skipped, missing, failed = modlist.install(m, lst, folder, log=print, chooser=chooser)
+        print(f"Installed {len(done)}, already there {len(skipped)}, missing {len(missing)}, failed {len(failed)}.")
+        for n in missing:
+            print(f"  missing: {n}")
+        if done:
+            print("Run 'folm.py deploy' to put them in the game.")
+        return 1 if failed else 0
+    except modlist.ListError as e:
+        raise FolmError(str(e))
+
+
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="folm.py", description="The FOLM Project mod manager (v1.0)")
+    from folm_core.version import VERSION
+    p = argparse.ArgumentParser(prog="folm.py", description=f"The FOLM Project mod manager (v{VERSION})")
     p.add_argument("--edition", default="courier", choices=["courier", "wanderer"])
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("init"); s.add_argument("--game-dir"); s.add_argument("--prefix")
@@ -421,8 +477,9 @@ def main(argv=None):
     s = sub.add_parser("tag"); s.add_argument("name"); s.add_argument("tags", nargs="+")
     s = sub.add_parser("sort"); s.add_argument("--preview", action="store_true")
     s = sub.add_parser("category"); s.add_argument("name"); s.add_argument("category")
-    s = sub.add_parser("profile"); s.add_argument("action", choices=["list", "create", "switch", "delete"])
-    s.add_argument("name", nargs="?"); s.add_argument("--copy-from")
+    s = sub.add_parser("profile"); s.add_argument("action", choices=["list", "create", "switch", "rename", "delete"])
+    s.add_argument("name", nargs="?"); s.add_argument("new_name", nargs="?", help="rename: the new name")
+    s.add_argument("--copy-from")
     for c in ("deploy", "undeploy", "order", "catch", "crash-report"):
         sub.add_parser(c)
     s = sub.add_parser("play"); s.add_argument("--no-watch", action="store_true")
@@ -433,6 +490,7 @@ def main(argv=None):
     rq = sub.add_parser("requires", help="what mods need that isn't installed (plugin checks + Nexus requirement lists)")
     rq.add_argument("mod", nargs="?", help="only this mod")
     rq.add_argument("--offline", action="store_true", help="don't ask Nexus; use the saved lists")
+    sub.add_parser("updates", help="check for a newer FOLM and newer files for your Nexus mods")
     sub.add_parser("settings")
     s = sub.add_parser("set"); s.add_argument("key"); s.add_argument("value")
     s = sub.add_parser("geck"); s.add_argument("--edit", metavar="MOD")
@@ -444,6 +502,12 @@ def main(argv=None):
     s.add_argument("--note")
     s = sub.add_parser("conflicts"); s.add_argument("name", nargs="?"); s.add_argument("--limit", type=int, default=5)
     s = sub.add_parser("convert-check"); s.add_argument("plugin"); s.add_argument("--json", action="store_true")
+    s = sub.add_parser("modlist", help="install a mod list from your downloads, or save this profile as one")
+    s.add_argument("action", choices=["check", "install", "save"])
+    s.add_argument("file", help="the .folmlist file")
+    s.add_argument("--from", dest="source", default="~/Downloads", help="folder with the downloads (default ~/Downloads)")
+    s.add_argument("--name", help="save: the list's name")
+    s.add_argument("--auto", action="store_true", help="FOMOD: take the installer's default choices without asking")
     a = p.parse_args(argv)
     try:
         from folm_core import desktop
@@ -457,7 +521,7 @@ def main(argv=None):
             "move": cmd_move, "note": cmd_note, "tag": cmd_tag, "profile": cmd_profile,
             "sort": cmd_sort, "category": cmd_category,
             "deploy": cmd_deploy, "undeploy": cmd_undeploy, "order": cmd_order, "conflicts": cmd_conflicts,
-            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "doctor": cmd_doctor, "health": cmd_health, "requires": cmd_requires, "loot": cmd_loot, "handled": cmd_handled, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check}
+            "catch": cmd_catch, "play": cmd_play, "preflight": cmd_preflight, "doctor": cmd_doctor, "health": cmd_health, "requires": cmd_requires, "updates": cmd_updates, "loot": cmd_loot, "handled": cmd_handled, "settings": cmd_settings, "set": cmd_set, "crash-report": cmd_crash_report, "geck": cmd_geck, "keep": cmd_keep, "convert-check": cmd_convert_check, "modlist": cmd_modlist}
     try:
         sys.exit(cmds[a.cmd](a, m) or 0)
     except FolmError as e:

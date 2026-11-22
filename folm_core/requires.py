@@ -74,7 +74,18 @@ def _is_extender(name):
     return bool({"nvse", "xnvse", "fose"} & set(words) or {"script", "extender"} <= set(words)) and \
         all(w in EXTENDER_WORDS or w.isdigit() for w in words)
 # "Only for X" / "optional" notes: the requirement applies only to some setups
-CONDITIONAL = re.compile(r"\bonly (?:for|if|needed|when|with)\b|\boptional\b|\bif you (?:use|want|have)\b|\bif using\b", re.I)
+CONDITIONAL = re.compile(r"\bonly (?:(?:required|needed|necessary|used) )?(?:for|if|when|with|in)\b|\bonly needed\b|\boptional\b|\bif you (?:use|want|have)\b|\bif using\b"
+                         r"|\bsoft[ -]?req|\bnot (?:strictly )?required\b|\brecommended\b", re.I)
+# Requirements that are modding tools, not something the game loads. The game never needs the GECK or
+# xEdit (they're for making mods); a LOD generator is needed once, and its result is FOLM's Generated LOD.
+AUTHORING_TOOL = re.compile(r"\bgeck\b|\b(?:x|fnv|fo3)edit\b", re.I)
+LOD_TOOL = re.compile(r"lodgen", re.I)
+# A guide is instructions to follow, not something to install
+GUIDE = re.compile(r"\bguide\b", re.I)
+# Nexus requirements found by testing not to be needed: {(game domain, mod id, required mod id)}
+NOT_NEEDED = {
+    ("newvegas", 88898, 74295),   # High Priority LOD only flags a mesh NVMIM uses; harmless without NVMIM
+}
 
 STOPWORDS = {"nvse", "xnvse", "fose", "plugin", "the", "a", "of", "for", "and", "mod", "new", "vegas", "fallout",
              "fnv", "fo3", "nv", "edition", "version", "by"}
@@ -295,6 +306,8 @@ def check(m, online=None, only=None):
         if i:
             by_id.setdefault(i, []).append(x)
     reqs = nexus_requirements(m, sorted({i for i in ids.values() if i}), online=online)
+    from .tools import OUTPUT_MOD
+    has_generated_lod = any(x["name"] == OUTPUT_MOD["xlodgen"] for x in enabled)
     done_ids = set()
     for modname, i in ids.items():
         if not i or i in done_ids:          # several files from one Nexus page share its list: report it once
@@ -309,6 +322,12 @@ def check(m, online=None, only=None):
                 continue                    # Visual C++ / DirectX runtimes: Proton provides them
             if _is_extender(r["name"]) and has_extender():
                 continue
+            if GUIDE.search(r["name"]) or (domain, i, rid) in NOT_NEEDED:
+                continue
+            if AUTHORING_TOOL.search(r["name"]):
+                continue                    # GECK / xEdit: for making mods, the game never loads them
+            if LOD_TOOL.search(r["name"]) and has_generated_lod:
+                continue                    # the LOD generator already ran: its output is the Generated LOD mod
             have = _best_named(by_id.get(rid, []), r["name"]) if rid else []
             if not have:
                 hit = _find_by_name(mods, r["name"])

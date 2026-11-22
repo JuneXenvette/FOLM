@@ -164,6 +164,32 @@ def catch(manifest_path, overwrite_dir, log=print):
     return moved
 
 
+def forget_mod(manifest_path, mod):
+    """Before a mod's staged files are replaced (an update): take its deployed files out of the game folder
+    and the manifest. A hard link still points at the old file, so after the update it would no longer
+    match its source and the next deploy would take it for the user's own edit and catch it into
+    Overwrite, where it would win over the new version. Files the user really changed are left alone.
+    Returns how many were removed."""
+    if not os.path.exists(manifest_path):
+        return 0
+    with open(manifest_path) as fh:
+        m = json.load(fh)
+    keep, removed = [], 0
+    for r in m["files"]:
+        t, s = r["target"], r["source"]
+        if r["mod"] == mod and os.path.lexists(t) and os.path.exists(s) and (
+                os.path.samefile(t, s) if r["how"] == "link" else os.path.getsize(t) == os.path.getsize(s)):
+            os.remove(t)
+            removed += 1
+        else:
+            keep.append(r)
+    if removed:
+        m["files"] = keep
+        with open(manifest_path, "w") as fh:
+            json.dump(m, fh, indent=1)
+    return removed
+
+
 # ---------------------------------------------------------------- conflicts
 
 def conflicts(game_dir, data_dir, mods_dir, enabled_mods, baseline=None):
@@ -175,6 +201,8 @@ def conflicts(game_dir, data_dir, mods_dir, enabled_mods, baseline=None):
     """
     providers = {}
     shown = {}
+    base_ci = {b.lower() for b in baseline} if baseline is not None else None
+    data_prefix = os.path.relpath(data_dir, game_dir).replace(os.sep, "/") + "/"   # "Data/"
     for mod in enabled_mods:
         mdir = os.path.join(mods_dir, mod)
         if not os.path.isdir(mdir):
@@ -184,8 +212,8 @@ def conflicts(game_dir, data_dir, mods_dir, enabled_mods, baseline=None):
             if key not in providers:
                 shown[key] = ("(game folder) " if is_root else "") + rel
                 base = game_dir if is_root else data_dir
-                rel_game = os.path.relpath(os.path.join(base, rel), game_dir).replace(os.sep, "/")
-                in_game = (rel_game.lower() in {b.lower() for b in baseline}) if baseline is not None \
+                rel_game = rel if is_root else data_prefix + rel
+                in_game = (rel_game.lower() in base_ci) if base_ci is not None \
                     else exists_ci(base, rel) is not None
                 providers[key] = ["(game)"] if in_game else []
             providers[key].append(mod)

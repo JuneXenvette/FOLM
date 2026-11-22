@@ -50,7 +50,7 @@ may be dated; each item is something FOLM should handle, test, or warn about.
 | Problem | FOLM |
 |---|---|
 | **Removing mods mid-playthrough** breaks saves (quests and scripts stay in the save) | ✅ FOLM reads the plugin list in each save and warns before you disable a mod your recent saves use, after deploy, and before Play |
-| Old saves don't work with a big new mod list | ✅ Per-profile saves (`SLocalSavePath`); the Default profile keeps the normal Saves folder |
+| Old saves don't work with a big new mod list | ✅ The Saves tab checks every save against the profile you pick: green fits, red is missing plugins (with the profile it fits) |
 | Script-heavy mods cause save bloat (e.g. Project Nevada, spawn mods using PlaceAtMe) | ✅ LOOT warnings; compatibility list. Could add a "known heavy" note |
 | Blindly cleaning plugins with FNVEdit can remove edits a mod needs and *cause* crashes | ✅ FOLM shows LOOT's cleaning notes but never cleans automatically |
 | Missing masters, wrong load order, incompatible mods | ✅ Master checks, LOOT sorting and warnings, crash reports |

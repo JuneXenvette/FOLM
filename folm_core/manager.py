@@ -4,6 +4,7 @@ Everything here returns data or raises FolmError; nothing prints or exits, so a
 GUI can call it directly and show results however it likes.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -56,7 +57,7 @@ def steam_libraries():
 
 
 def empty_profile():
-    return {"mods": [], "plugin_order": [], "disabled_plugins": []}
+    return {"mods": [], "plugin_order": [], "disabled_plugins": [], "plugin_last": []}
 
 
 def _quiet(*a):
@@ -91,12 +92,17 @@ class Manager:
         self._mtime = os.stat(self.path).st_mtime_ns
 
     def sync(self):
-        """Re-read profile.json if another FOLM (CLI or app) changed it since we last read/wrote it."""
+        """Re-read profile.json if another FOLM (CLI or app) changed it since we last read/wrote it.
+        True if it did."""
         try:
             if os.stat(self.path).st_mtime_ns != self._mtime:
                 self._load()
+                return True
         except FileNotFoundError:
             pass
+        except json.JSONDecodeError:       # caught mid-write by an older FOLM: keep what we have, retry later
+            pass
+        return False
 
     @property
     def ready(self):
@@ -118,9 +124,13 @@ class Manager:
         return self.data.get("active")
 
     def save(self):
+        """Write profile.json in one step (a new file swapped in), so another FOLM reading it at the same
+        moment never sees it half written."""
         os.makedirs(self.dir, exist_ok=True)
-        with open(self.path, "w") as fh:
+        tmp = f"{self.path}.tmp-{os.getpid()}"
+        with open(tmp, "w") as fh:
             json.dump(self.data, fh, indent=1)
+        os.replace(tmp, self.path)
         self._mtime = os.stat(self.path).st_mtime_ns
 
     mods_dir = property(lambda s: os.path.join(s.dir, "mods"))
@@ -223,14 +233,27 @@ class Manager:
         base = os.path.basename(path or "")
         return re.sub(r"-\d{2,7}(-[\w.]*)*\.\w+$|\.\w+$", "", base).strip().lower()
 
-    def find_duplicates(self, archive):
+    @staticmethod
+    def version_stem(text):
+        """A mod's name without its version: 'Second Wind NVHR v3' -> 'second wind nvhr', 'Stewie Tweaks
+        10.05' -> 'stewie tweaks'. Only things that look like versions go (v3, 1.2, 10.05b); plain numbers
+        stay, so 'Part 1 of 2' and 'Part 2 of 2' are different mods."""
+        t = re.sub(r"\.(7z|zip|rar|fomod|exe)$", "", os.path.basename(text or "").lower())
+        t = re.sub(r"(-\d+)+(-[\w.]*)*$", "", t)                  # Nexus's -id-version-time suffix
+        t = re.sub(r"\bv(er(sion)?)?\.?\s*\d+(\.\d+)*[a-z]?\b|\b\d+(\.\d+)+[a-z]?\b", " ", t)
+        return " ".join(re.sub(r"[^a-z0-9]+", " ", t).split())
+
+    def find_duplicates(self, archive, name=None):
         """Mods (any profile) installed from this same file, or from another version of it.
-        Returns [(kind, profile, mod)] with kind "same" or "version", this profile first."""
+        Returns [(kind, profile, mod)] with kind "same" or "version", this profile first.
+        Another version: the same Nexus page and file, or (for mods not from Nexus, or where one side's
+        page isn't known) the same name once versions are taken off, like 'My Mod v2' and 'My Mod v3'."""
         from . import requires
         fp = self.file_fingerprint(archive)
         base = os.path.basename(archive).lower()
         nid = requires.nexus_id({"source": archive})
         stem = self._file_stem(archive)
+        names = {self.version_stem(name or ""), self.version_stem(self.guess_name(archive))} - {""}
         hits, learned = [], False
         profiles = sorted(self.data["profiles"].items(), key=lambda kv: kv[0] != self.active)
         for prof, p in profiles:
@@ -249,6 +272,9 @@ class Manager:
                 if same:
                     hits.append(("same", prof, mod))
                 elif nid and requires.nexus_id(mod) == nid and self._file_stem(src) == stem:
+                    hits.append(("version", prof, mod))
+                elif not (nid and requires.nexus_id(mod) and requires.nexus_id(mod) != nid) and names & {
+                        self.version_stem(mod["name"]), self.version_stem(self.guess_name(src))}:
                     hits.append(("version", prof, mod))
         if learned:
             self.save()
@@ -272,7 +298,7 @@ class Manager:
             r = {}
         if r.get("type") == "tool":
             return self.install_tool(archive, r["tool"], log)
-        dups = self.find_duplicates(archive)
+        dups = self.find_duplicates(archive, name)
         replace = None
         if dups:
             kind, prof, old = dups[0]
@@ -335,6 +361,9 @@ class Manager:
         name = old["name"]
         dest = os.path.join(self.mods_dir, name)
         aside = os.path.join(self.dir, f".replacing-{int(time.time())}")
+        gone = dep.forget_mod(self.manifest, name)     # else the old links get caught into Overwrite
+        if gone:
+            log(f"  took {gone} file(s) of the old version out of the game folder; deploy to put the new ones in")
         if os.path.isdir(dest):
             os.rename(dest, aside)
         before = [dict(x) for x in self.cur["mods"]]
@@ -689,6 +718,28 @@ class Manager:
                       if os.path.isdir(os.path.join(self.mods_dir, n)) and n.lower() not in have
                       and not n.startswith(OVERWRITE + " ["))
 
+    # what Ctrl+Z puts back: this profile's mod list (order, on/off, notes, tags, categories) and plugins
+    UNDO_KEYS = ("mods", "plugin_order", "disabled_plugins", "plugin_last")
+
+    def snapshot(self):
+        """This profile's mod list and plugin state, to put back later with restore() (undo)."""
+        import copy
+        return {"profile": self.active, **{k: copy.deepcopy(self.cur.get(k, [])) for k in self.UNDO_KEYS}}
+
+    def restore(self, snap):
+        """Put back a snapshot() of this profile. Mods it lists that are no longer in the library are left
+        out (their files are gone). Returns the snapshot of what it replaced, for redo."""
+        if snap.get("profile") != self.active:
+            raise FolmError("that change was made in another profile")
+        before = self.snapshot()
+        import copy
+        for k in self.UNDO_KEYS:
+            if snap.get(k) is not None:
+                self.cur[k] = copy.deepcopy(snap[k])
+        self.cur["mods"] = [x for x in self.cur["mods"] if os.path.isdir(os.path.join(self.mods_dir, x["name"]))]
+        self.save()
+        return before
+
     def set_enabled(self, name, on):
         self.mod(name)["enabled"] = bool(on)
         self.save()
@@ -825,8 +876,7 @@ class Manager:
 
     def create_profile(self, name, copy_from=None):
         ps = self.data["profiles"]
-        if name in ps:
-            raise FolmError(f"profile {name!r} already exists")
+        name = self._check_profile_name(name)
         if copy_from and copy_from not in ps:
             raise FolmError(f"no profile {copy_from!r}")
         ps[name] = json.loads(json.dumps(ps[copy_from])) if copy_from else empty_profile()
@@ -843,12 +893,96 @@ class Manager:
         if was:
             return self.deploy(log)
 
+    def _save_folder_for(self, name):
+        """A profile's own saves folder, from before 1.2.0 (separate saves per profile), when it has one with
+        saves in it: renaming the profile still takes it along. None otherwise: all profiles now share the
+        game's Saves folder, and the Saves tab shows which saves suit which profile."""
+        if name == "Default":
+            return None
+        d = self._save_folder_path(name)
+        try:
+            return d if d and any(f.lower().endswith(".fos") for f in os.listdir(d)) else None
+        except OSError:
+            return None
+
+    def _save_folder_path(self, name):
+        try:
+            return os.path.join(self.ini_dir(), "Saves", re.sub(r'[\\/:*?"<>|]', "_", name))
+        except KeyError:                                   # no game set up yet: no saves either
+            return None
+
+    def _check_profile_name(self, name):
+        name = (name or "").strip()
+        if not name:
+            raise FolmError("give the profile a name")
+        if name in self.data["profiles"]:
+            raise FolmError(f"there's already a profile called {name!r}")
+        if any(c in name for c in "[]"):
+            raise FolmError("a profile name can't contain [ or ]")
+        return name
+
+    def rename_profile(self, old, new, log=_quiet):
+        """Rename a profile, with its saves folder and its Overwrite (caught files). The active profile
+        is taken out of the game and put back, because the game is told where its saves are."""
+        if old not in self.data["profiles"]:
+            raise FolmError(f"no profile {old!r}")
+        if old == "Default":
+            raise FolmError("the Default profile keeps the game's normal Saves folder, so it keeps its name; "
+                            "copy it to a new profile instead")
+        new = self._check_profile_name(new)
+        if new == "Default":
+            raise FolmError("'Default' is the profile that uses the game's normal Saves folder; pick another name")
+        saves_old = self._save_folder_for(old)            # an old per-profile folder: it moves along
+        saves_new = self._save_folder_path(new) if saves_old else None
+        if saves_old and os.path.isdir(saves_old) and os.path.lexists(saves_new) and saves_new != saves_old:
+            raise FolmError(f"a saves folder for {new!r} already exists ({saves_new}); pick another name")
+        ow_old = os.path.join(self.mods_dir, f"{OVERWRITE} [{old}]")
+        ow_new = os.path.join(self.mods_dir, f"{OVERWRITE} [{new}]")
+        if os.path.lexists(ow_new):
+            raise FolmError(f"a folder {os.path.basename(ow_new)!r} already exists in FOLM's mods; pick another name")
+        if saves_old and os.path.isdir(saves_old) and self.data.get("prefix"):
+            from . import wineprefix
+            if wineprefix.prefix_busy(self.data["prefix"]):
+                raise FolmError("The game (or another Wine program) is running; close it before renaming, "
+                                "so its saves can be moved.")
+        here = old == self.active and self.deployed
+        if here:
+            self.undeploy(log)
+        ps = self.data["profiles"]
+        self.data["profiles"] = {(new if k == old else k): v for k, v in ps.items()}
+        if self.data["active"] == old:
+            self.data["active"] = new
+        if saves_old and os.path.isdir(saves_old) and saves_new != saves_old:
+            os.rename(saves_old, saves_new)
+            log(f"Moved its saves to {saves_new}")
+        if os.path.isdir(ow_old):
+            os.rename(ow_old, ow_new)
+        self.save()
+        if here:
+            return self.deploy(log)
+
     def delete_profile(self, name):
+        """Remove a profile. Its mods stay in the library and its saves stay where they are; files it
+        caught (its Overwrite) become a staged mod, "Caught files from <name>", so nothing is lost.
+        Returns (saves folder or None, caught-files mod name or None)."""
         if name == self.active:
             raise FolmError("can't delete the active profile; switch first")
-        if self.data["profiles"].pop(name, None) is None:
+        if name not in self.data["profiles"]:
             raise FolmError(f"no profile {name!r}")
+        saves = self._save_folder_for(name)
+        kept = None
+        ow = os.path.join(self.mods_dir, f"{OVERWRITE} [{name}]")
+        if os.path.isdir(ow):
+            if dep.walk_rel(ow):
+                kept, n = f"Caught files from {name}", 2
+                while os.path.lexists(os.path.join(self.mods_dir, kept)):
+                    kept, n = f"Caught files from {name} ({n})", n + 1
+                os.rename(ow, os.path.join(self.mods_dir, kept))
+            else:
+                shutil.rmtree(ow, ignore_errors=True)
+        self.data["profiles"].pop(name)
         self.save()
+        return (saves if saves and os.path.isdir(saves) else None), kept
 
     # ------------------------------------------------------------ LOOT
     def loot_masterlist(self, log=_quiet, force=False):
@@ -942,7 +1076,8 @@ class Manager:
         invalidate = self.setting("archive_invalidation")
         order, active, problems = loadorder.apply(self.data_dir, self.plugins_txt, self.cur["plugin_order"],
                                                   self.cur["disabled_plugins"], self.edition, self.lo_state,
-                                                  log=log, rules=rules, redate_bsas=invalidate)
+                                                  log=log, rules=rules, redate_bsas=invalidate,
+                                                  last=self.cur.get("plugin_last", []))
         self._game_settings(apply=True, log=log)
         with open(self.deploy_state, "w") as fh:
             json.dump(self._fingerprint(), fh, indent=1)
@@ -975,7 +1110,8 @@ class Manager:
         names = [n for n in self.enabled() if n != self.overwrite_name]
         return {"profile": self.active, "order": names, "mods": {n: self._mod_signature(n) for n in names},
                 "disabled_plugins": sorted(d.lower() for d in self.cur["disabled_plugins"]),
-                "plugin_order": list(self.cur["plugin_order"]), "settings": dict(self.data.get("settings", {}))}
+                "plugin_order": list(self.cur["plugin_order"]), "plugin_last": list(self.cur.get("plugin_last", [])),
+                "settings": {k: self.setting(k) for k in self.SETTINGS}}
 
     def pending_changes(self):
         """What the game doesn't have yet, in plain words ([] = the game matches FOLM)."""
@@ -996,7 +1132,8 @@ class Manager:
         out += [f"Updated: {n} (its files changed)" for n in new["order"] if n in before and before[n] != now[n]]
         if [n for n in old.get("order", []) if n in now] != [n for n in new["order"] if n in before]:
             out.append("Mod order changed (which mod wins a file conflict)")
-        if old.get("disabled_plugins") != new["disabled_plugins"] or old.get("plugin_order") != new["plugin_order"]:
+        if old.get("disabled_plugins") != new["disabled_plugins"] or old.get("plugin_order") != new["plugin_order"] \
+                or old.get("plugin_last", []) != new["plugin_last"]:
             out.append("Plugins turned on/off or moved")
         if old.get("settings") != new["settings"]:
             out.append("Game settings changed (⚙ Settings)")
@@ -1005,9 +1142,12 @@ class Manager:
     # ------------------------------------------------------------ settings
     SETTINGS = {
         "archive_invalidation": (True, "Archive invalidation: loose mod files override the game's archives"),
-        "profile_saves": (True, "Separate saves per profile (the Default profile keeps the normal Saves folder)"),
         "fps_cap": (120, "FPS cap through DXVK, keeps physics stable with V-Sync off (0 = off)"),
         "borderless": (True, "Borderless window: no title bar, so the whole picture fits the screen"),
+        "low_memory_save": (True, "Save the game by itself when its memory runs low (New Vegas; needs JIP LN)"),
+        "sound_fix": (True, "Fix crackling sound: a bigger sound buffer, set in the game's Steam launch options"),
+        "nvtf_texture_pool": (True, "NVTF: keep one copy of each texture, not two (saves memory; New Vegas, windowed)"),
+        "gamemode": (False, "GameMode: full CPU speed while the game runs (needs GameMode installed)"),
     }
 
     def setting(self, key):
@@ -1028,6 +1168,27 @@ class Manager:
                 raise FolmError(f"{key} must be between 0 and 1000")
         self.data.setdefault("settings", {})[key] = value
         self.save()
+        if key in ("sound_fix", "gamemode"):
+            self.steam_fixes()
+
+    def steam_fixes(self, log=_quiet):
+        """Put FOLM's quiet launch-option fixes into Steam (or take them out), while Steam is closed.
+        Nothing to see: with Steam open it waits until next time."""
+        from . import steamopts
+        app = self.data.get("steam_app_id") or game_info(self.edition)["steam_app_id"]
+        wanted = {v: x for v, (x, key) in steamopts.FIXES.items() if self.setting(key)
+                  and (v != "gamemoderun" or steamopts.gamemode_why_not() is None)}
+        before = set(self.data.get("steam_fixes", []))
+        try:
+            ours, note = steamopts.sync(app, wanted, before)
+        except (OSError, ValueError) as e:
+            log(f"Couldn't update Steam's launch options ({e}); the game runs without them.")
+            return
+        if ours != before:
+            self.data["steam_fixes"] = sorted(ours)
+            self.save()
+        if note:
+            log(note)
 
     ARCHIVE_KEYS = {"bInvalidateOlderFiles": "1", "SInvalidationFile": ""}
     ini_state = property(lambda s: os.path.join(s.dir, "ini-state.json"))
@@ -1037,12 +1198,27 @@ class Manager:
                             os.path.basename(game_info(self.edition)["ini_dir"]))
 
     def _profile_save_folder(self):
-        """Saves subfolder for this profile (None = the game's normal Saves folder)."""
-        if not self.setting("profile_saves") or self.active == "Default":
-            return None
-        return re.sub(r'[\\/:*?"<>|]', "_", self.active)
+        """None: every profile saves in the game's Saves folder (separate folders per profile were dropped
+        in 1.2.0; they never reached the game here, and they'd keep copies of the same playthrough apart)."""
+        return None
 
     def save_dir(self):
+        """Where the game really saves: SLocalSavePath as the game reads it (Fallout.ini, then
+        FalloutPrefs.ini, then JIP LN's FalloutCustom.ini; the last one that sets it wins). Only when none
+        of them sets it, the folder FOLM would choose for this profile."""
+        found = None
+        for f in ("Fallout.ini", "FalloutPrefs.ini", "FalloutCustom.ini"):
+            try:
+                with open(os.path.join(self.ini_dir(), f), encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+            except OSError:
+                continue
+            mm = re.findall(r"^\s*SLocalSavePath\s*=\s*(.+?)\s*$", text, re.M | re.I)
+            if mm and mm[-1].strip("\\/ "):
+                found = mm[-1]
+        if found:
+            parts = [x for x in re.split(r"[\\/]+", found) if x]
+            return os.path.join(self.ini_dir(), *parts)
         sub = self._profile_save_folder()
         base = os.path.join(self.ini_dir(), "Saves")
         return os.path.join(base, sub) if sub else base
@@ -1074,6 +1250,9 @@ class Manager:
                                     "Close it, then try again.")
                 wineprefix.set_overrides(self.data["prefix"], st["dll_overrides"])
             os.remove(self.ini_state)
+        if os.path.isdir(self.data_dir):
+            from . import lowmemsave
+            lowmemsave.clear_request(self.data_dir)      # a save request left from a session that ended
         if not apply:
             return
         st, done = {"ini": [], "files": []}, []
@@ -1099,7 +1278,7 @@ class Manager:
             done.append(f"archive invalidation ({'FalloutCustom.ini' if jip else 'Fallout.ini'})")
         sub = self._profile_save_folder()
         if sub:
-            os.makedirs(self.save_dir(), exist_ok=True)
+            os.makedirs(os.path.join(self.ini_dir(), "Saves", sub), exist_ok=True)
             edit(game_ini, "General", {"SLocalSavePath": f"Saves\\{sub}\\"})
             done.append(f"saves in Saves/{sub}")
         # Mods that ship a proxy DLL next to the exe (e.g. NVHR's d3dx9_38.dll): make Wine load it
@@ -1118,6 +1297,28 @@ class Manager:
                     st["dll_overrides"] = wineprefix.set_overrides(self.data["prefix"], todo)
                     save_state()
                 done.append("Wine loads " + ", ".join(f"{d}.dll ({proxies[d]})" for d in sorted(proxies)))
+        if self.setting("low_memory_save"):
+            from . import lowmemsave
+            why = lowmemsave.why_not(self.edition, self.data["game_dir"], self.data_dir)
+            if not why:
+                st["files"].append({"path": lowmemsave.install(self.data_dir), "backup": None})
+                save_state()
+                done.append("saves by itself when memory runs low")
+        if self.setting("nvtf_texture_pool") and not self.nvtf_pool_why_not():
+            # Same as dxvk.conf below: the deployed NVTF.ini is the mod's own file (a hard link), so move it
+            # aside and write FOLM's copy; undo moves the mod's file back.
+            p = dep.exists_ci(self.data_dir, "NVSE/Plugins/NVTF.ini")
+            if (ini.get(p, "DirectX", "bUseDefaultPoolForTextures") or "0").split(";")[0].strip() != "1":
+                bak = os.path.join(self.dir, "backups", "NVTF.ini.folm-backup")
+                os.makedirs(os.path.dirname(bak), exist_ok=True)
+                if os.path.exists(bak):
+                    os.remove(bak)
+                shutil.move(p, bak)
+                shutil.copyfile(bak, p)
+                st["files"].append({"path": p, "backup": bak})
+                save_state()
+                ini.set_keys(p, "DirectX", {"bUseDefaultPoolForTextures": "1"})
+            done.append("NVTF keeps one copy of each texture")
         cap = int(self.setting("fps_cap") or 0)
         if cap > 0:
             conf = os.path.join(self.data["game_dir"], "dxvk.conf")
@@ -1144,6 +1345,24 @@ class Manager:
         if done:
             log("Game settings: " + ", ".join(done) + ".")
 
+    def nvtf_pool_why_not(self):
+        """None if NVTF's bUseDefaultPoolForTextures can be turned on safely here, else why not.
+        It breaks alt-tab in exclusive fullscreen, so only when the game runs in a window."""
+        from . import ini
+        if self.edition != "courier":
+            return "New Vegas only (NVTF is a New Vegas plugin)"
+        if not dep.exists_ci(self.data_dir, "NVSE/Plugins/NVTF.ini"):
+            return "needs NVTF and its NVTF.ini"
+        full = None
+        for name in ("FalloutCustom.ini", "FalloutPrefs.ini"):
+            v = ini.get(os.path.join(self.ini_dir(), name), "Display", "bFull Screen")
+            if v is not None:
+                full = v.split(";")[0].strip()
+                break
+        if full == "1":
+            return "the game runs in exclusive fullscreen, where this breaks alt-tab (turn on Borderless window)"
+        return None
+
     # ------------------------------------------------------------ saves + pre-Play checks
     def save_warnings(self, active=None):
         """[(save, [plugins it needs that won't be active])] for this profile's newest saves."""
@@ -1152,6 +1371,108 @@ class Manager:
             rows, _ = self.plugin_order()
             active = [n for n, on, _, _ in rows if on]
         return saves.check(self.save_dir(), active)
+
+    def _game_plugins(self):
+        """Plugins in Data that came with the game (not deployed from a mod): lowercase names."""
+        plugins, _ = loadorder.scan_plugins(self.data_dir)
+        mine, theirs = set(), set()
+        if os.path.exists(self.manifest):
+            with open(self.manifest) as fh:
+                mf = json.load(fh)
+            top = os.path.normpath(self.data_dir)
+            for rec in mf.get("files", []):
+                if os.path.dirname(os.path.normpath(rec["target"])) == top:
+                    mine.add(os.path.basename(rec["target"]).lower())
+            for b in mf.get("backups", []):                  # game plugins a mod replaced (TTW's masters)
+                if os.path.dirname(os.path.normpath(b["target"])) == top:
+                    theirs.add(os.path.basename(b["target"]).lower())
+        return ({p.lower() for p in plugins} - mine) | {t for t in theirs if t.endswith((".esm", ".esp"))}
+
+    def profile_plugins(self, name, game=None):
+        """The plugins a profile turns on (lowercase): the game's own, plus those of its enabled mods, minus
+        the ones turned off in its Plugins tab. That's what the game gets on the next deploy (▶ Play), even
+        before a change is deployed."""
+        p = self.data["profiles"][name]
+        have = set(self._game_plugins() if game is None else game)
+        for mod in p["mods"]:
+            if mod.get("enabled"):
+                have |= {x.lower() for x in self.mod_plugins(mod["name"])}
+        return have - {d.lower() for d in p.get("disabled_plugins", [])}
+
+    def saves_overview(self, active=None, cache=None):
+        """Every save of this profile, newest first: [{"name", "path", "time", "plugins", "missing"}].
+        "plugins" is None when a save can't be read. `cache` ({path: (mtime, plugins)}) skips saves read
+        before, so a long list of saves is only read once."""
+        from . import saves
+        game = self._game_plugins()
+        if active is None:
+            active = self.profile_plugins(self.active, game)
+        out = []
+        for path, mtime in saves.list_saves(self.save_dir()):
+            hit = (cache or {}).get(path)
+            plugins = hit[1] if hit and hit[0] == mtime else saves.plugins_in_save(path)
+            if cache is not None:
+                cache[path] = (mtime, plugins)
+            out.append({"name": os.path.basename(path), "path": path, "time": mtime, "plugins": plugins,
+                        "missing": saves.missing_for(plugins, active) if plugins is not None else [],
+                        "fits": []})
+        # saves that don't suit this profile: which other profiles they do suit
+        if any(r["missing"] for r in out):
+            others = {n: self.profile_plugins(n, game) for n in self.data["profiles"] if n != self.active}
+            for r in out:
+                if r["missing"]:
+                    need = {p.lower() for p in r["plugins"]}
+                    r["fits"] = [n for n, have in others.items() if need <= have]
+        return out
+
+    def plugin_sources(self, plugins):
+        """Where each plugin comes from and where to get it: {plugin: {"mod", "url", "link"}}.
+        "mod": the installed mod that has it (any profile), or None. "url" is, in order: that mod's Nexus
+        page, LOOT's link for the plugin, or a Nexus search for its name. "link" says which, for the label."""
+        from urllib.parse import quote
+        from . import requires
+        domain = requires.GAME_DOMAIN.get(self.edition, "newvegas")
+        entries = {}
+        for prof in self.data["profiles"].values():         # Nexus records live on the profile entries
+            for mod in prof["mods"]:
+                if requires.nexus_id(mod) or mod["name"] not in entries:
+                    entries[mod["name"]] = mod
+        owner = {}
+        try:
+            names = sorted(os.listdir(self.mods_dir))
+        except OSError:
+            names = []
+        for name in names:
+            for f in self.mod_plugins(name):
+                owner.setdefault(f.lower(), name)
+        try:
+            ml = self.loot_masterlist()
+        except Exception:                                    # offline and never downloaded: no LOOT links
+            ml = None
+        game = self._game_plugins()
+        out = {}
+        for p in plugins:
+            mod = owner.get(p.lower())
+            if p.lower() in game:                            # the game's own (or its DLC): nothing to get
+                out[p] = {"mod": mod, "url": None, "link": "comes with the game"}
+                continue
+            url = link = None
+            nid = requires.nexus_id(entries.get(mod, {})) if mod else None
+            if nid:
+                url, link = f"https://www.nexusmods.com/{domain}/mods/{nid}", "Nexus page"
+            if not url and ml is not None:
+                for u in ml.entries_for(p)["url"]:
+                    u = u.get("link") if isinstance(u, dict) else u
+                    if isinstance(u, str) and u.startswith("http"):
+                        site = re.sub(r"^https?://(www\.)?([^/]+).*$", r"\2", u)
+                        url, link = u, "Nexus page" if "nexusmods.com" in u else f"Mod page ({site})"
+                        break
+            if not url:
+                words = re.sub(r"([a-z])([A-Z])", r"\1 \2", os.path.splitext(p)[0])
+                url = f"https://www.nexusmods.com/games/{domain}/search?keyword={quote(words)}"
+                link = "Search Nexus"
+            out[p] = {"mod": mod, "url": url, "link": link}
+        return out
 
     def saves_needing(self, plugins):
         """Newest saves (of this profile) that use any of these plugins: [(save, [plugins])]."""
@@ -1245,7 +1566,8 @@ class Manager:
         plugins, bad = loadorder.scan_plugins(self.data_dir)
         lc = self.loot_check()
         extra, ranks = (lc[0], lc[1]) if lc else ({}, {})
-        order, problems = loadorder.sort_plugins(plugins, self.cur["plugin_order"], self.edition, extra, ranks)
+        order, problems = loadorder.sort_plugins(plugins, self.cur["plugin_order"], self.edition, extra, ranks,
+                                                 self.cur.get("plugin_last", []))
         self.last_loot_messages = lc[2] if lc else []
         dis = {d.lower() for d in self.cur["disabled_plugins"]}
         rows, i = [], 0
@@ -1255,6 +1577,29 @@ class Manager:
             i += on
         return rows, bad + problems
 
+    def move_plugin(self, name, where):
+        """Move a plugin in the load order. where: "earlier" / "later" (one place, among the plugins it's
+        free to swap with: masters and LOOT rules still win), "end" (keep it at the end, after plugins
+        added later too; the last one put there loads last) or "auto" (back to FOLM's own order)."""
+        last = [p for p in self.cur.get("plugin_last", []) if p.lower() != name.lower()]
+        if where == "end":
+            last.append(name)
+        elif where in ("earlier", "later"):
+            rows, _ = self.plugin_order()
+            names = [r[0] for r in rows]
+            i = next(k for k, n in enumerate(names) if n.lower() == name.lower())
+            j = i - 1 if where == "earlier" else i + 1
+            if 0 <= j < len(names):
+                names[i], names[j] = names[j], names[i]
+            pinned = {p.lower() for p in last}
+            self.cur["plugin_order"] = [n for n in names if n.lower() not in pinned]
+            if any(p.lower() == name.lower() for p in self.cur.get("plugin_last", [])):   # moving among the end ones
+                last = [n for n in names if n.lower() in pinned or n.lower() == name.lower()]
+        elif where == "auto":
+            self.cur["plugin_order"] = [p for p in self.cur["plugin_order"] if p.lower() != name.lower()]
+        self.cur["plugin_last"] = last
+        self.save()
+
     def set_plugin_active(self, name, on):
         dis = [d for d in self.cur["disabled_plugins"] if d.lower() != name.lower()]
         if not on:
@@ -1262,16 +1607,35 @@ class Manager:
         self.cur["disabled_plugins"] = dis
         self.save()
 
+    @contextlib.contextmanager
+    def reusing_conflicts(self):
+        """Inside this block the conflict scan runs once and is shared (the mod list, its sections and
+        the Conflicts tab all need it). Nothing may change the mods inside the block."""
+        self._conflict_cache = None
+        self._reuse_conflicts = True
+        try:
+            yield
+        finally:
+            self._reuse_conflicts, self._conflict_cache = False, None
+
     def conflicts(self, only=None):
         self.need()
+        if getattr(self, "_reuse_conflicts", False):
+            if self._conflict_cache is None:
+                self._conflict_cache = self._scan_conflicts()
+            c = self._conflict_cache
+        else:
+            c = self._scan_conflicts()
+        if only:
+            c = {p: v for p, v in c.items() if any(x.lower() == only.lower() for x in v)}
+        return c
+
+    def _scan_conflicts(self):
         baseline = None
         if self.deployed:
             with open(self.manifest) as fh:
                 baseline = json.load(fh).get("baseline")
-        c = dep.conflicts(self.data["game_dir"], self.data_dir, self.mods_dir, self.enabled(), baseline)
-        if only:
-            c = {p: v for p, v in c.items() if any(x.lower() == only.lower() for x in v)}
-        return c
+        return dep.conflicts(self.data["game_dir"], self.data_dir, self.mods_dir, self.enabled(), baseline)
 
     def conflict_marks(self):
         """{mod_name: (files_won, files_lost)} for the mod list's conflict icons."""
@@ -1409,7 +1773,7 @@ class Manager:
 
     # ------------------------------------------------------------ Tools tab (xEdit, xLODGen)
     def tools_status(self):
-        """Every tool in the catalog with whether it's installed here: [{id, name, what, how, get, exe}]."""
+        """Every tool in the catalog with whether it's installed here: [{id, name, what, how, get, exe, version}]."""
         from . import tools
         out = []
         for t in tools.CATALOG:
@@ -1417,8 +1781,12 @@ class Manager:
                 exe = self.geck_path() if self.data.get("game_dir") and os.path.isdir(self.data["game_dir"]) else None
             else:
                 exe = tools.find_exe(tools.tools_dir(home(), t["id"]), t["id"], self.edition)
+            if t["id"] == "geck":
+                ver = tools.pe_version(exe) if exe else None
+            else:
+                ver = tools.tool_version(tools.tools_dir(home(), t["id"]), exe) if exe else None
             out.append({"id": t["id"], "name": t["names"][self.edition], "what": t["what"], "how": t["how"],
-                        "get": t["get"][self.edition], "exe": exe})
+                        "get": t["get"][self.edition], "exe": exe, "version": ver})
         return out
 
     def install_tool(self, archive, tool_id, log=_quiet):
@@ -1440,6 +1808,7 @@ class Manager:
             if os.path.isdir(dest):
                 shutil.rmtree(dest)
             os.rename(tmp, dest)
+            tools.save_version(dest, archive)
         except archive_mod.ArchiveError as e:
             raise FolmError(str(e))
         finally:
@@ -1767,6 +2136,7 @@ class Manager:
         steam = shutil.which("steam")
         if not steam:
             raise FolmError("Steam isn't on PATH.")
+        self.steam_fixes()                                  # only does something while Steam is closed
         subprocess.Popen([steam, "-applaunch", str(app)], stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
         return app

@@ -32,11 +32,11 @@ def scan_plugins(data_dir):
 
 
 def apply(data_dir, plugins_txt, preferred, disabled, edition, state_path, log=print, rules=None,
-          redate_bsas=True):
+          redate_bsas=True, last=()):
     """rules: optional (extra_after, group_rank) from LOOT."""
     plugins, bad = scan_plugins(data_dir)
     extra_after, group_rank = rules or ({}, {})
-    order, problems = sort_plugins(plugins, preferred, edition, extra_after, group_rank)
+    order, problems = sort_plugins(plugins, preferred, edition, extra_after, group_rank, last)
     state = {"mtimes": {}, "plugins_txt_backup": None}
     if os.path.exists(state_path):
         with open(state_path) as fh:

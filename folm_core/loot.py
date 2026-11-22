@@ -66,8 +66,27 @@ def update(home, edition, log=lambda *a: None, max_age_days=7, force=False):
     return d
 
 
+_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)     # libyaml's parser is ~10x faster when present
+_loaded = {}
+
+
 def load(folder):
-    """Parse masterlist.yaml with the prelude spliced in, as LOOT does."""
+    """Parse masterlist.yaml with the prelude spliced in, as LOOT does. Kept in memory until the files change."""
+    key = tuple(_mtime(os.path.join(folder, f)) for f in ("masterlist.yaml", "prelude.yaml"))
+    if _loaded.get(folder, (None,))[0] != key:
+        _loaded[folder] = (key, Masterlist(_parse(folder)))
+    return _loaded[folder][1]
+
+
+def _mtime(path):
+    try:
+        st = os.stat(path)
+        return st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
+def _parse(folder):
     ml = open(os.path.join(folder, "masterlist.yaml"), encoding="utf-8").read()
     pre_path = os.path.join(folder, "prelude.yaml")
     if os.path.exists(pre_path):
@@ -75,8 +94,7 @@ def load(folder):
         m = re.search(r"^prelude:.*?(?=^\S)", ml, re.S | re.M)
         if m:
             ml = ml[:m.start()] + "prelude:\n" + "\n".join("  " + l for l in pre.splitlines()) + "\n" + ml[m.end():]
-    data = yaml.safe_load(ml) or {}
-    return Masterlist(data)
+    return yaml.load(ml, Loader=_LOADER) or {}
 
 
 def _as_list(x):

@@ -94,9 +94,14 @@ install -m 755 "$BUILD/7z/7zzs" "$APPDIR/usr/bin/7zz"
 cp "$BUILD/7z/License.txt" "$BUILD/7z/readme.txt" "$APPDIR/usr/share/doc/7-Zip/"
 
 say "FOLM $VERSION"
-cp -r "$ROOT"/folm.py "$ROOT"/folm_gui.py "$ROOT"/folm_core "$ROOT"/games "$ROOT"/assets \
+cp -r "$ROOT"/folm.py "$ROOT"/folm_gui.py "$ROOT"/folm_core "$ROOT"/games "$ROOT"/lists "$ROOT"/assets \
       "$ROOT"/LICENSE "$ROOT"/README.md "$APPDIR/usr/share/folm/"
 find "$APPDIR/usr/share/folm" -name __pycache__ -prune -exec rm -rf {} +
+# The memory gauge's helper: a tiny Windows program that runs in the game's own Wine (memwatch/memwatch.c)
+command -v i686-w64-mingw32-gcc >/dev/null || { echo "i686-w64-mingw32-gcc is needed to build (MinGW)" >&2; exit 1; }
+mkdir -p "$APPDIR/usr/share/folm/memwatch"
+cp "$ROOT/memwatch/memwatch.c" "$APPDIR/usr/share/folm/memwatch/"
+i686-w64-mingw32-gcc -O2 -s -o "$APPDIR/usr/share/folm/memwatch/folm-memwatch.exe" "$ROOT/memwatch/memwatch.c"
 "$PY" -s -E -m compileall -q -j0 --invalidation-mode unchecked-hash "$APPDIR/usr/share/folm" "$SP" >/dev/null
 mkdir -p "$APPDIR/usr/share/doc/FOLM"
 cp "$ROOT/packaging/THIRD-PARTY.txt" "$APPDIR/usr/share/doc/FOLM/"

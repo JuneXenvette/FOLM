@@ -14,12 +14,22 @@ MAGIC = (b"FO3SAVEGAME", b"FO4_SAVEGAME")
 
 
 def plugins_in_save(path, scan_limit=8_000_000):
-    """Return the save's plugin list (in its load order), or None if it can't be read."""
-    try:
-        with open(path, "rb") as fh:
-            b = fh.read(scan_limit)
-    except OSError:
-        return None
+    """Return the save's plugin list (in its load order), or None if it can't be read.
+    The list comes after the save's screenshot, about 440 KB in, so the first MB nearly always has it;
+    only if it doesn't is the rest read (up to scan_limit)."""
+    for limit in (min(1 << 20, scan_limit), scan_limit):
+        try:
+            with open(path, "rb") as fh:
+                b = fh.read(limit)
+        except OSError:
+            return None
+        found = _plugins_in(b)
+        if found is not None or len(b) < limit:
+            return found
+    return None
+
+
+def _plugins_in(b):
     if not b.startswith(MAGIC[0]):
         return None
     first = re.search(rb"\.es[mp]\|", b)

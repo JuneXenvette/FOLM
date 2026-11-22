@@ -16,18 +16,38 @@ Proven on real setups: TTW 3.4 with about 50 mods (31 plugins, 18 script extende
 with its DXVK build, NV SMP, BOG, EVE Lite), and Fallout 3 with FOSE, the Anniversary Patcher, the BSA
 Decompressor, the ESM Patcher and the Unofficial Patch, all installed and launched from FOLM on Linux.
 
-## Status: provided as-is
+## The goal: let New Vegas breathe
 
-FOLM is released as a finished community project. **The original author isn't maintaining it**: there's no
-support and no promise of fixes. It's open source (GPL-3.0) so anyone can fork it, fix it and carry it on.
-Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md](CONTRIBUTING.md).
+New Vegas and Fallout 3 are old 32-bit games. However much memory your PC has, they can only use
+4 GB, and a big mod setup fills that up until the game crashes. For years the answer has been "use
+fewer mods".
+
+FOLM's new goal is to change that answer. Instead of crashing when the 4 GB get full, the game should
+**breathe**: FOLM measures how full the game really is, warns you and saves your game before it's too
+late, trims what doesn't need to be there, and, step by step, moves work out of the game's 4 GB
+altogether. The aim is bigger mod setups that stay stable, and a reason for modders to come back to
+New Vegas. The plan, with what's done and what's next, is in
+[docs/memory-project/](docs/memory-project/guide.md).
+
+The memory work will become **Second Wind**: a free, open mod for everyone, on Windows too and with
+any mod manager. It saves your game when memory runs low, pulls in far-away clutter during fights, and
+lets other mods ask how much room is left. A Windows edition of FOLM comes after that. Most New Vegas
+players are on Windows, and Second Wind's parts are Windows programs already, so they get those first.
+
+> I'm a fan of the series, and I hope this helps revive the modding scene for this wonderful game.
+> — the FOLM maintainer
+
+## Status
+
+FOLM is actively developed again. It's open source (GPL-3.0): issues and pull requests are welcome;
+see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 | | |
 |---|---|
 | ✅ Tested | Linux Mint 22 (Cinnamon, X11), Steam + Proton 10 / GE-Proton, New Vegas + TTW 3.4, Fallout 3 GOTY + FOSE, AMD GPU (RADV) |
 | ❓ Not tested | Wayland, other distros (should work), NVIDIA, Steam Deck, Flatpak Steam |
 | ⚠️ Lightly tested | Fallout 3 beyond the start of the game (no long playthrough yet); xEdit and xLODGen from the Tools tab (built and unit-tested, not yet tried on a real game) |
-| ❌ Not supported yet | BAIN wizard scripts (`wizard.txt`; plain BAIN packages work), Nexus Collections, update checks, the FO3 → NV converter (only its check report works) |
+| ❌ Not supported yet | BAIN wizard scripts (`wizard.txt`; plain BAIN packages work), Nexus Collections, the FO3 → NV converter (only its check report works), Windows (planned) |
 
 ## What it does
 
@@ -47,7 +67,10 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
 - **Load order:** plugins are always sorted after their masters, with **LOOT's** community rules built in.
   LOOT warnings you've already dealt with can be **marked as handled**; links in LOOT's messages (like a missing
   mod's page) open or copy with a right-click.
-- **Profiles:** separate mod setups sharing one library, each with **its own saves**.
+- **Profiles:** separate mod setups sharing one library and the game's one Saves folder. The **Saves** tab
+  shows which saves fit the profile you picked (green) and which are missing its plugins (red, with the
+  profile they fit). The **Profiles** menu makes a new one (empty or a copy), renames one or deletes one
+  (its mods, saves and caught files are kept).
 - **Already installed?** Installing the same file twice (or another version of an installed mod) asks first:
   skip it, update/replace it keeping its place and notes, or keep both.
 - **Checks before ▶ Play:** mods deployed, 4GB patch still applied, xNVSE / FOSE present, missing masters,
@@ -58,13 +81,29 @@ Pull requests are welcome if someone picks up maintenance; see [CONTRIBUTING.md]
   an FPS cap in `dxvk.conf`, borderless window, read-only INIs kept read-only, archive invalidation.
 - **Crash reports:** when the game crashes, FOLM gathers the logs, mod list and system info into one
   report with a plain-language diagnosis. Local only, personal paths removed.
+- **Memory gauge:** New Vegas and Fallout 3 are 32-bit, so they can use 4 GB however much RAM the PC has.
+  While you play, FOLM watches how full those 4 GB are and warns you on the desktop before they run out
+  ("save now"), so a long session doesn't end in a crash and a lost save. On New Vegas (with JIP LN) the
+  first warning also **makes the game save by itself**, under its own name (`FOLM_LowMemory_<date>`), so
+  your other saves are never at risk. The crash report shows how the memory filled up over the session.
 - **TTW support (optional):** download TTW from its official page and install it in FOLM like any mod: FOLM
   runs TTW's own installer (with the Linux speed fix `-NoOggEnc2`), and the result becomes a mod sorted in TTW's
   official order. FOLM can also build a Readius patch for TTW 3 from your own copy of Readius. FOLM never
   bundles or re-hosts TTW.
 - **GECK under Proton** for mod makers (Tools tab): opens with your mods loaded and turns what you save into a mod.
+- **FAQ and Resources tabs:** questions and answers by topic, and the community's guides, documentation
+  and tools, each a click away. Categories open into topics; a search box finds the right one.
+- **⚡ Optimize**: one window with the fixes for problems nearly everyone has on Linux (crackling sound,
+  alt-tab, physics above 120 FPS, CPU speed with GameMode), explained in plain words.
+- **Personalize** (Settings tab): FOLM's colors and font. Colors can follow your game's own: with the
+  Pip-Boy look, category names take your HUD color and the selected tab your Pip-Boy color, read from
+  the game's settings, so they change when you change them in the game.
+- **Check for updates** (Tools tab): a newer FOLM, and every mod sorted into needs an update / up to date /
+  can't be checked, each with a link (its Nexus files page, its home page, LOOT's link or a Nexus search).
+  Only goes online when you press it.
 - **Tools tab:** GECK, FNVEdit/FO3Edit (xEdit) and xLODGen. Installed tools open with your mods loaded; missing
-  ones are greyed out with a link to get them. Drop a tool's download on FOLM to add it. What xEdit saves becomes
+  ones are greyed out with a link to get them. Each shows its version (like xLODGen 4.1.5o) and a link to
+  its page, so you can tell when a newer one is out. Drop a tool's download on FOLM to add it. What xEdit saves becomes
   the mod "xEdit output", what xLODGen builds becomes "Generated LOD". LOOT's "needs cleaning" warnings get a
   **Clean it with xEdit** option. xEdit can't change your mods' files or the game's: everything it saves is a
   mod you can turn off ([how](docs/tools.md)).
@@ -82,7 +121,7 @@ You need Steam with the game installed (run it once to the main menu first). Wha
    chmod +x FOLM-*-x86_64.AppImage
    ```
 3. **Double-click it.** On first start FOLM finds the game in your Steam libraries (or you pick the folder).
-   **⚙ Settings → Add FOLM to the app menu** puts it in your menu; if you later move the file or download a
+   **Settings tab → Add FOLM to the app menu** puts it in your menu; if you later move the file or download a
    newer one, the menu entry follows the one you last opened.
 
 The command-line tool is inside too: `./FOLM-*-x86_64.AppImage --cli doctor` (any `folm.py` command after `--cli`).
@@ -118,11 +157,14 @@ except the game folder while mods are deployed, and the game's INI files (backed
 1. **Add mods:** drag a downloaded mod file onto the window, use **Install mod…**, or add your mods folder in the
    **Library** tab and double-click.
 2. **Tick** the mods you want and press **▶ Play**. FOLM deploys, sorts, checks and starts the game.
+   Always start the game from FOLM's ▶ Play, not from Steam or the launcher: the checks, the memory gauge,
+   the low-memory save and crash reports only work then.
 3. Something wrong? Run **🩺 Health check**. After a crash, FOLM offers a crash report.
 4. Modding tools (GECK, xEdit, xLODGen) are in the **Tools** tab.
 
 Start with the essentials in [docs/recommended-mods.md](docs/recommended-mods.md) (xNVSE, 4GB patch,
-JIP LN, NVTF and friends).
+JIP LN, NVTF and friends). The 🩺 Health check shows which of them you have, with links, and the FAQ tab
+explains why each matters.
 
 ## How it works
 
@@ -148,7 +190,7 @@ Mod makers: FOLM opens the GECK (Tools tab) with your mods loaded and turns what
 
 ## Archive invalidation
 
-On by default (**⚙ Settings** in the app). On deploy FOLM redates the game's archives and writes
+On by default (the **Settings** tab in the app). On deploy FOLM redates the game's archives and writes
 `bInvalidateOlderFiles=1` and `SInvalidationFile=` under `[Archive]` — into `FalloutCustom.ini` when JIP LN
 is installed, otherwise into the game's `Fallout.ini` (backed up first). Undeploy restores the exact previous
 values. No dummy archive needed.
@@ -163,6 +205,31 @@ Nexus page the mod came from, for the requirement check and the duplicate check.
 FOLM 1.0 could also sign in to Nexus and take "Mod Manager Download" links. That was removed in 1.1.1:
 Nexus only allows apps it has registered to use players' personal API keys. When you update, FOLM gives
 those links back to the app that had them before and deletes the API key it had stored.
+
+## Mod lists
+
+A mod list is a small text file (`.folmlist`) naming mods in order, where to get each one, and what to
+do after installing it (remove a file, turn a plugin off, add a note). Download the files yourself with
+Nexus's **Manual download** button, then **Settings tab → Install a mod list…**: FOLM looks in your
+downloads folder (and its subfolders), shows which files it found and which are missing (double-click a
+missing one to open its Nexus page; the list updates as downloads arrive), and installs the ready ones
+in the list's order. Mods already installed are skipped, so you can run a list again after getting the
+rest.
+
+**Settings tab → Save this profile as a mod list…** writes your own profile as a list to share. Lists that
+come with FOLM are in `lists/` (for example `ttw-lod.folmlist`, the Viva New Vegas guide's LOD resources
+for TTW). The format:
+
+```yaml
+folm_list: 1
+name: My list
+edition: courier          # courier (New Vegas / TTW) or wanderer (Fallout 3)
+mods:
+  - file: Much Needed LOD # the download's title, as Nexus names the file
+    nexus: 64805          # the Nexus page (optional, but makes matching exact)
+    remove: [MuchNeededLOD.esp]   # paths inside the mod to delete after installing
+    plugins_off: []       # plugins to turn off; also: name, note, tags, enabled, match
+```
 
 ## Mod health check
 
@@ -218,8 +285,9 @@ before it starts. On the command line, `folm.py play` deploys first (`--no-deplo
 
 - **Save safety:** FOLM reads the plugin list stored in each save. Untick a mod your recent saves use and it
   warns you first (removing mods mid-playthrough breaks quests and scripts). Deploy and Play warn too.
-- **Per-profile saves** (on by default): each profile keeps its saves in `Saves/<profile>/`, so a test setup
-  never mixes with your playthrough. The Default profile keeps the normal `Saves` folder.
+- **One Saves folder, checked per profile:** every profile saves in the game's normal `Saves` folder (no
+  copies of a playthrough spread over folders). The **Saves** tab checks each save against the profile
+  you've picked, and updates as you switch profiles or turn mods on and off.
 - **FPS cap** (default 120): above ~120 FPS these engines' physics break (bouncing NPCs, sped-up game).
   NVTF and Stewie's Tweaks don't include a limiter, so FOLM sets one in DXVK, the Direct3D layer Proton uses:
   `d3d9.maxFrameRate` in the game folder's `dxvk.conf`. Any existing `dxvk.conf` is backed up and restored on undeploy.
@@ -238,7 +306,7 @@ before it starts. On the command line, `folm.py play` deploys first (`--no-deplo
 - **Read-only INIs** (a common way to stop the launcher rewriting `Fallout.ini`) stay read-only: FOLM
   unlocks the file for its one edit and locks it again.
 
-All of these are in the app's **⚙ Settings** menu; every change is undone exactly on undeploy.
+All of these are in the app's **Settings** tab; every change is undone exactly on undeploy.
 
 ## Load order & LOOT
 
@@ -295,6 +363,7 @@ folm_core/          shared engine: detect, install, FOMOD, legacy installers, de
 games/courier/      New Vegas / TTW edition settings
 games/wanderer/     Fallout 3 edition settings
 tools/              one-off builders (Readius TTW patch)
+lists/              mod lists that come with FOLM (.folmlist)
 tests/              core tests: .venv/bin/python -m unittest discover tests
 docs/               compatibility notes, known issues, recommended mods, development log
 mods/               a home for original mods made for FOLM (none released)
@@ -328,18 +397,21 @@ python3 folm.py order                         # show the plugin load order and a
 python3 folm.py undeploy                      # put the game folder back exactly as it was
 python3 folm.py conflicts                     # which mods overwrite which files, and who wins
 python3 folm.py catch                         # move files the game/tools created into this profile's Overwrite
-python3 folm.py profile create "Vanilla"      # profiles: create / switch / list / delete (--copy-from P)
+python3 folm.py profile create "Vanilla"      # profiles: create / switch / list / rename OLD NEW / delete (--copy-from P)
 python3 folm.py note NAME "text"; python3 folm.py tag NAME fixes ttw
 python3 folm.py sort --preview              # arrange mods into sections (then 'sort' to apply)
 python3 folm.py category NAME "Visuals"      # override a mod's section ('auto' to reset)
 python3 folm.py convert-check SomeFO3Mod.esp  # what converting a Fallout 3 plugin to TTW needs
-python3 folm.py settings                      # e.g. archive invalidation (app: ⚙ Settings menu)
+python3 folm.py settings                      # e.g. archive invalidation (app: Settings tab)
 python3 folm.py set archive-invalidation on   # loose mod files override the game's archives (default on)
 python3 folm.py set fps-cap 120                # or off; written to dxvk.conf on deploy
-python3 folm.py set profile-saves on          # each profile keeps its own saves
 python3 folm.py preflight                     # the pre-Play checks (play runs them too; --force to skip)
 python3 folm.py health                        # are mods really working? (files, plugins, what loaded)
 python3 folm.py requires                      # what mods need that isn't installed (plugin checks + Nexus lists)
+python3 folm.py updates                       # a newer FOLM, or newer files for your Nexus mods?
+python3 folm.py modlist check lists/ttw-lod.folmlist   # which downloads are found (--from DIR)
+python3 folm.py modlist install LIST.folmlist  # install the found ones in order (--auto for FOMOD defaults)
+python3 folm.py modlist save my.folmlist       # write this profile as a mod list
 python3 folm.py handled add PLUGIN TEXT --by MOD --note ...   # mark a LOOT message as handled (list / remove)
 ./backup.sh                                   # back up the project, FOLM data, saves and INIs
 ```
@@ -398,8 +470,21 @@ FOLM stands on the shoulders of a community that has kept these games alive for 
 - **ModdingLinked** — authors of *The Best of Times* (TTW) and *Viva New Vegas* guides. FOLM's
   section order and the TTW settings it writes follow their guides.
 - **xNVSE team** and the authors of **JIP LN, JohnnyGuitar, ShowOff, lStewieAl's Tweaks, UIO,
-  MCM, YUP/YUPTTW**, the **4GB patchers**, and every mod author whose work FOLM installs.
+  MCM, YUP/YUPTTW**, the **4GB patchers**, and every mod author whose work FOLM installs. FOLM's
+  low-memory save runs on JIP LN's script runner and xNVSE's commands.
+- **xEdit** (ElminsterAU and the xEdit team) and **xLODGen** (Sheson), which the Tools tab runs.
+- **New Vegas Tick Fix (NVTF)**, **New Vegas Heap Replacer** and the **FNV Performance Guide**, whose
+  work on the game's memory and speed the memory project builds on.
+- **DXVK** (Philip Rebohle and contributors), **Wine** and Valve's **Proton**, which make these games run
+  on Linux at all; DXVK's work on keeping textures out of 32-bit games' memory is part of why the 4 GB
+  goal is within reach.
+- **NV SMP Physics** (GPL-3.0), studied for the plan to move physics out of the game's memory.
+- **7-Zip** (Igor Pavlov), which the AppImage includes.
+- The **GECK Wiki** editors and every guide and tool author linked in the Resources tab.
 - **Bethesda Softworks and Obsidian Entertainment** for the games themselves.
 
 FOLM is an unofficial fan project. Each mod belongs to its authors and keeps its own license;
 FOLM installs mods the player downloaded and doesn't redistribute anyone's work.
+
+**How it's made:** FOLM is written with an AI coding assistant (Claude, by Anthropic). The maintainer
+decides what it should do, tests it on a real game, and decides what goes in.

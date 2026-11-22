@@ -1,0 +1,1132 @@
+diff --git a/heap_replacer/dheap/dheap.h b/heap_replacer/dheap/dheap.h
+index cef1a89..1374d00 100644
+--- a/heap_replacer/dheap/dheap.h
++++ b/heap_replacer/dheap/dheap.h
+@@ -354,6 +354,7 @@ void *dheap_malloc(struct dheap *heap, size_t size)
+ 
+     dheap_put_used_cell(heap, cell);
+     addr = cell->desc.addr;
++    InterlockedExchangeAdd(&sw_dheap_used_bytes, (LONG)cell->desc.size); /* Second Wind */
+ 
+ end:
+     return addr;
+@@ -404,6 +405,7 @@ int dheap_free(struct dheap *heap, void *addr)
+ 
+     if (cell = dheap_rmv_used_cell(heap, addr, index))
+     {
++        InterlockedExchangeAdd(&sw_dheap_used_bytes, -(LONG)cell->desc.size); /* Second Wind */
+         dheap_add_free_cell(heap, cell);
+     }
+ 
+diff --git a/heap_replacer/main/heap_replacer.h b/heap_replacer/main/heap_replacer.h
+index b147292..85f0a51 100644
+--- a/heap_replacer/main/heap_replacer.h
++++ b/heap_replacer/main/heap_replacer.h
+@@ -16,6 +16,8 @@ void *hr_recalloc(void *addr, size_t size, size_t count);
+ size_t hr_mem_size(void *addr);
+ void hr_free(void *addr);
+ 
++#include "main/sw_measure.h" /* Second Wind */
++#include "main/sw_reserve.h" /* Second Wind v3 */
+ #include "dheap/dheap.h"
+ #include "mheap/mheap.h"
+ #include "sheap/sheap.h"
+@@ -23,6 +25,8 @@ void hr_free(void *addr);
+ struct mheap m;
+ struct dheap d;
+ 
++#include "main/sw_stats.h" /* Second Wind */
++
+ void *hr_malloc(size_t size)
+ {
+     void *addr;
+@@ -43,7 +47,7 @@ void *hr_malloc(size_t size)
+         }
+     }
+ 
+-    addr = hr_winapi_malloc(size);
++    addr = sw_big_malloc(size); /* Second Wind: Windows first, then the reserve */
+ 
+     if (!addr)
+     {
+@@ -76,7 +80,7 @@ void *hr_calloc(size_t count, size_t size)
+         }
+     }
+ 
+-    addr = hr_winapi_malloc(size);
++    addr = sw_big_malloc(size); /* Second Wind: Windows first, then the reserve */
+ 
+     if (!addr)
+     {
+@@ -105,6 +109,10 @@ void *hr_realloc(void *addr, size_t size)
+     }
+ 
+     new_addr = hr_malloc(size);
++    if (!new_addr) /* Second Wind v3: NVHR 4.3 copied into NULL here; keep the old block, like realloc */
++    {
++        goto end;
++    }
+     memcpy(new_addr, addr, old_size);
+     hr_free(addr);
+ 
+@@ -131,6 +139,10 @@ void *hr_recalloc(void *addr, size_t count, size_t size)
+     }
+ 
+     new_addr = hr_calloc(count, size);
++    if (!new_addr) /* Second Wind v3, as in hr_realloc */
++    {
++        goto end;
++    }
+     memcpy(new_addr, addr, old_size);
+     hr_free(addr);
+ 
+@@ -157,6 +169,8 @@ size_t hr_mem_size(void *addr)
+         goto end;
+     }
+ 
++    size = sw_big_size(addr); /* Second Wind v3: NVHR 4.3 said 0 here, so realloc lost the contents */
++
+ end:
+     return size;
+ }
+@@ -178,28 +192,35 @@ void hr_free(void *addr)
+         goto end;
+     }
+ 
++    if (sw_res_owns(addr)) /* Second Wind v3 */
++    {
++        sw_res_free(addr);
++        goto end;
++    }
++
++    sw_big_free(addr); /* Second Wind */
+     hr_winapi_free(addr);
+ 
+ end:
+     return;
+ }
+ 
+-void *game_heap_allocate(void *self, void *edx, size_t size)
++void *HR_GAMECALL game_heap_allocate(void *self, void *edx, size_t size)
+ {
+     return hr_malloc(size);
+ }
+ 
+-void *game_heap_reallocate(void *self, void *edx, void *addr, size_t size)
++void *HR_GAMECALL game_heap_reallocate(void *self, void *edx, void *addr, size_t size)
+ {
+     return hr_realloc(addr, size);
+ }
+ 
+-size_t game_heap_msize(void *self, void *edx, void *addr)
++size_t HR_GAMECALL game_heap_msize(void *self, void *edx, void *addr)
+ {
+     return hr_mem_size(addr);
+ }
+ 
+-void game_heap_free(void *self, void *edx, void *addr)
++void HR_GAMECALL game_heap_free(void *self, void *edx, void *addr)
+ {
+     hr_free(addr);
+ }
+@@ -242,6 +263,8 @@ void apply_hr_hooks()
+     HR_LOG("initializing dheap");
+     dheap_init(&d);
+ 
++    sw_reserve_init(); /* Second Wind v3: while the 4 GB is still in one piece */
++
+ #if defined(FNV)
+ 
+     patch_jmp((void *)0x00ECD1C7, &crt_malloc);
+@@ -332,4 +355,6 @@ void apply_hr_hooks()
+     patch_nop_call((void *)0x00AA6534);
+ 
+ #endif
++
++    sw_start(); /* Second Wind */
+ }
+diff --git a/heap_replacer/main/main.c b/heap_replacer/main/main.c
+index e819b88..b5c54f9 100644
+--- a/heap_replacer/main/main.c
++++ b/heap_replacer/main/main.c
+@@ -74,6 +74,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID lpReserved)
+ 
+         create_loader_hook();
+     }
++    else if (fdwReason == DLL_PROCESS_DETACH && lpReserved) /* Second Wind v4: the game is exiting */
++    {
++        sw_stop();
++    }
+ 
+     return TRUE;
+ }
+diff --git a/heap_replacer/main/sw_measure.h b/heap_replacer/main/sw_measure.h
+new file mode 100644
+index 0000000..9c21015
+--- /dev/null
++++ b/heap_replacer/main/sw_measure.h
+@@ -0,0 +1,174 @@
++/*
++ * Second Wind: measuring additions to NVHR (New Vegas Heap Replacer).
++ *
++ * Changes nothing in how NVHR hands out memory. It only counts, and writes what it counts to
++ * secondwind-heap.log in the game folder:
++ *   - every minute, one line: how full the pools, the big-object heap (dheap) and the direct
++ *     allocations over 16 MB are, and the largest free gap left in the game's 4 GB;
++ *   - every 5 minutes, and when an allocation fails, every pool on its own;
++ *   - every direct allocation over 16 MB (size, address), and any that fails.
++ * FOLM reads this file for the crash report and (later) the memory gauge.
++ *
++ * NVHR is GPL-2.0 (c) iranrmrf; these additions are GPL-2.0 too.
++ */
++#pragma once
++
++#include <stdio.h>
++#include <windows.h>
++
++#define SW_BIG (16u * 1024u * 1024u)
++
++static FILE *sw_log;
++static volatile LONG sw_big_live_bytes, sw_big_live_count, sw_big_total_count, sw_big_failed;
++static volatile LONG sw_dheap_used_bytes;
++static DWORD sw_start_tick;
++/* v4: every request over 16 MB this session, by size: 16-32, 32-64 and 64+ MB (the loading-screen ones) */
++static volatile LONG sw_big_by_size[3];
++static volatile LONG sw_probing;
++
++static void sw_count_big(size_t size)
++{
++    if (size >= SW_BIG)
++    {
++        InterlockedIncrement(&sw_big_by_size[size < 2u * SW_BIG ? 0 : size < 4u * SW_BIG ? 1 : 2]);
++    }
++}
++
++/*
++ * v4: the largest piece Windows will really hand out, found by asking. Under Wine, VirtualQuery shows
++ * a big region at 0x80000000 as reserved although Wine gives it out on demand (v3's log said 15.9 MB
++ * while the game got 85 MB there), so reading the map undercounts. This reserves a piece (address space
++ * only), gives it straight back, and halves its way to the largest size that works (16 tries).
++ * sw_probing tells sw_big_malloc that a failure in these microseconds may be the probe's doing.
++ */
++#define SW_PROBE_STEP (64u * 1024u)
++static size_t sw_probe_largest(void)
++{
++    size_t lo = 0, hi = (3u * 1024u * 1024u * 1024u) / SW_PROBE_STEP, mid;
++    void *p;
++    InterlockedExchange(&sw_probing, 1);
++    while (lo < hi)
++    {
++        mid = (lo + hi + 1u) / 2u;
++        if ((p = VirtualAlloc(NULL, mid * SW_PROBE_STEP, MEM_RESERVE, PAGE_NOACCESS)))
++        {
++            VirtualFree(p, 0, MEM_RELEASE);
++            lo = mid;
++        }
++        else
++        {
++            hi = mid - 1u;
++        }
++    }
++    InterlockedExchange(&sw_probing, 0);
++    return lo * SW_PROBE_STEP;
++}
++
++static double sw_ms_since(LARGE_INTEGER *t0)
++{
++    LARGE_INTEGER t1, f;
++    QueryPerformanceCounter(&t1);
++    QueryPerformanceFrequency(&f);
++    return (double)(t1.QuadPart - t0->QuadPart) * 1000.0 / (double)f.QuadPart;
++}
++
++struct sw_va
++{
++    size_t free_total, largest_free, reserved, committed;
++};
++
++static void sw_va_scan(struct sw_va *va)
++{
++    MEMORY_BASIC_INFORMATION mbi;
++    BYTE *p = (BYTE *)0x10000;
++    va->free_total = va->largest_free = va->reserved = va->committed = 0;
++    while ((size_t)p < 0xFFFF0000u && VirtualQuery(p, &mbi, sizeof(mbi)) == sizeof(mbi))
++    {
++        if (mbi.State == MEM_FREE)
++        {
++            va->free_total += mbi.RegionSize;
++            if (mbi.RegionSize > va->largest_free)
++            {
++                va->largest_free = mbi.RegionSize;
++            }
++        }
++        else if (mbi.State == MEM_RESERVE)
++        {
++            va->reserved += mbi.RegionSize;
++        }
++        else
++        {
++            va->committed += mbi.RegionSize;
++        }
++        if ((BYTE *)mbi.BaseAddress + mbi.RegionSize <= p)
++        {
++            break;
++        }
++        p = (BYTE *)mbi.BaseAddress + mbi.RegionSize;
++    }
++}
++
++#define SW_MB(x) ((double)(x) / (1024.0 * 1024.0))
++
++static void sw_printf(const char *fmt, ...)
++{
++    SYSTEMTIME t;
++    va_list ap;
++    if (!sw_log)
++    {
++        return;
++    }
++    GetLocalTime(&t);
++    fprintf(sw_log, "%02d:%02d:%02d ", t.wHour, t.wMinute, t.wSecond);
++    va_start(ap, fmt);
++    vfprintf(sw_log, fmt, ap);
++    va_end(ap);
++    fputc('\n', sw_log);
++    fflush(sw_log);
++}
++
++/* called from hr_malloc / hr_calloc when an allocation goes straight to Windows */
++static void sw_big_alloc(size_t size, void *addr)
++{
++    if (addr)
++    {
++        /* whole pages, as VirtualQuery reports them back in sw_big_free */
++        InterlockedExchangeAdd(&sw_big_live_bytes, (LONG)((size + 4095u) & ~4095u));
++        InterlockedIncrement(&sw_big_live_count);
++        InterlockedIncrement(&sw_big_total_count);
++        sw_count_big(size);
++        if (size >= SW_BIG)
++        {
++            sw_printf("big alloc %.1f MB at 0x%08X", SW_MB(size), (unsigned)(size_t)addr);
++        }
++    }
++    else
++    {
++        struct sw_va va;
++        InterlockedIncrement(&sw_big_failed);
++        sw_va_scan(&va);
++        /* largest: what Windows would really give (v4); the map's free total is kept for comparison */
++        sw_printf("FAILED alloc of %.1f MB (%u bytes): largest free gap %.1f MB, free in total %.1f MB",
++                  SW_MB(size), (unsigned)size, SW_MB(sw_probe_largest()), SW_MB(va.free_total));
++    }
++}
++
++/* called from hr_free before a direct allocation goes back to Windows */
++static void sw_big_free(void *addr)
++{
++    MEMORY_BASIC_INFORMATION mbi;
++    BYTE *p;
++    size_t size = 0;
++    if (VirtualQuery(addr, &mbi, sizeof(mbi)) != sizeof(mbi) || mbi.AllocationBase != addr)
++    {
++        return;
++    }
++    for (p = (BYTE *)addr; VirtualQuery(p, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.AllocationBase == addr &&
++                           mbi.State != MEM_FREE;
++         p += mbi.RegionSize)
++    {
++        size += mbi.RegionSize;
++    }
++    InterlockedExchangeAdd(&sw_big_live_bytes, -(LONG)size);
++    InterlockedDecrement(&sw_big_live_count);
++}
+diff --git a/heap_replacer/main/sw_reserve.h b/heap_replacer/main/sw_reserve.h
+new file mode 100644
+index 0000000..05aefbe
+--- /dev/null
++++ b/heap_replacer/main/sw_reserve.h
+@@ -0,0 +1,210 @@
++/*
++ * Second Wind v3: a reserved region for big requests (v4: plus the probe wait and the dheap give-back).
++ *
++ * Measured (2026-11-22): on loading screens the game asks for 85.3 MB in one piece, twice at once
++ * (and 21.3 MB at other times), and frees it again within seconds. After an hour the game's 4 GB
++ * has no 85 MB gap left anywhere, so that request fails and the game crashes ("hr_malloc returned
++ * NULL"), although only about 1.3 GB is really in use.
++ *
++ * So at start-up, while the 4 GB is still in one piece, Second Wind sets aside SW_RES_SIZE of address
++ * space (reserved, not committed: it costs no RAM). Requests over 16 MB still go to Windows first,
++ * exactly like NVHR 4.3. Only when Windows has no gap big enough does the request get a piece of the
++ * reserve, committed for as long as the game holds it and decommitted when it's freed, so the space
++ * is there again for the next loading screen. Nothing else can ever take it.
++ *
++ * GPL-2.0, like NVHR.
++ */
++#pragma once
++
++#include <windows.h>
++
++void *hr_winapi_malloc(size_t size); /* util.h */
++
++/* two 85.3 MB requests at once (64 KB-rounded: 2 x 85.375 MB), plus room to spare */
++#define SW_RES_SIZE (176u * 1024u * 1024u)
++#define SW_RES_GRAIN (64u * 1024u)
++#define SW_RES_MAX 32u
++
++struct sw_res_piece
++{
++    size_t off, len, size; /* len: committed (64 KB steps); size: what the game asked for */
++};
++
++static BYTE *sw_res_base;
++static struct sw_res_piece sw_res_pieces[SW_RES_MAX]; /* sorted by off */
++static size_t sw_res_count;
++static volatile LONG sw_res_used_bytes, sw_res_hits, sw_res_peak;
++static CRITICAL_SECTION sw_res_lock;
++
++static void sw_reserve_init(void)
++{
++    InitializeCriticalSection(&sw_res_lock);
++    /* top-down: away from where the game, NVHR's pools and the DLLs load */
++    sw_res_base = VirtualAlloc(NULL, SW_RES_SIZE, MEM_RESERVE | MEM_TOP_DOWN, PAGE_NOACCESS);
++}
++
++static int sw_res_owns(const void *addr)
++{
++    return sw_res_base && (const BYTE *)addr >= sw_res_base && (const BYTE *)addr < sw_res_base + SW_RES_SIZE;
++}
++
++static void *sw_res_alloc(size_t size)
++{
++    size_t len = (size + SW_RES_GRAIN - 1u) & ~(SW_RES_GRAIN - 1u), at = 0, i;
++    void *addr = NULL;
++    if (!sw_res_base || !size || size > SW_RES_SIZE)
++    {
++        return NULL;
++    }
++    EnterCriticalSection(&sw_res_lock);
++    if (sw_res_count < SW_RES_MAX)
++    {
++        /* first gap that fits */
++        for (i = 0; i <= sw_res_count; i++)
++        {
++            size_t gap_end = i < sw_res_count ? sw_res_pieces[i].off : SW_RES_SIZE;
++            if (gap_end - at >= len)
++            {
++                addr = VirtualAlloc(sw_res_base + at, len, MEM_COMMIT, PAGE_READWRITE);
++                if (addr)
++                {
++                    memmove(&sw_res_pieces[i + 1], &sw_res_pieces[i], (sw_res_count - i) * sizeof(sw_res_pieces[0]));
++                    sw_res_pieces[i].off = at;
++                    sw_res_pieces[i].len = len;
++                    sw_res_pieces[i].size = size;
++                    sw_res_count++;
++                    InterlockedExchangeAdd(&sw_res_used_bytes, (LONG)len);
++                    InterlockedIncrement(&sw_res_hits);
++                    if (sw_res_used_bytes > sw_res_peak)
++                    {
++                        sw_res_peak = sw_res_used_bytes;
++                    }
++                }
++                break;
++            }
++            if (i < sw_res_count)
++            {
++                at = sw_res_pieces[i].off + sw_res_pieces[i].len;
++            }
++        }
++    }
++    LeaveCriticalSection(&sw_res_lock);
++    return addr;
++}
++
++/* the piece that starts at addr: its index, or -1 */
++static int sw_res_find(const void *addr)
++{
++    size_t off = (size_t)((const BYTE *)addr - sw_res_base), i;
++    for (i = 0; i < sw_res_count; i++)
++    {
++        if (sw_res_pieces[i].off == off)
++        {
++            return (int)i;
++        }
++    }
++    return -1;
++}
++
++static size_t sw_res_size(const void *addr)
++{
++    int i;
++    size_t size = 0;
++    EnterCriticalSection(&sw_res_lock);
++    if ((i = sw_res_find(addr)) >= 0)
++    {
++        size = sw_res_pieces[i].size;
++    }
++    LeaveCriticalSection(&sw_res_lock);
++    return size;
++}
++
++static void sw_res_free(void *addr)
++{
++    int i;
++    EnterCriticalSection(&sw_res_lock);
++    if ((i = sw_res_find(addr)) >= 0)
++    {
++        /* decommit: the RAM goes back, the address space stays ours for the next big request */
++        VirtualFree(addr, sw_res_pieces[i].len, MEM_DECOMMIT);
++        InterlockedExchangeAdd(&sw_res_used_bytes, -(LONG)sw_res_pieces[i].len);
++        sw_res_count--;
++        memmove(&sw_res_pieces[i], &sw_res_pieces[i + 1], (sw_res_count - (size_t)i) * sizeof(sw_res_pieces[0]));
++    }
++    LeaveCriticalSection(&sw_res_lock);
++}
++
++static void sw_map(const char *why);          /* sw_stats.h */
++static size_t sw_dheap_give_back(int now);    /* sw_stats.h, v4 */
++static int sw_give_back;                      /* v4: Data\NVHR\secondwind.ini, off unless turned on */
++
++/*
++ * hr_malloc / hr_calloc's path for requests over 16 MB (and for anything the pools and the dheap
++ * couldn't take): Windows first, as NVHR 4.3 does, then the reserve. Fresh commits are zeroed, so
++ * hr_calloc can use it too.
++ */
++static void *sw_big_malloc(size_t size)
++{
++    void *addr = hr_winapi_malloc(size);
++    if (!addr && sw_probing) /* v4: the once-a-minute gap probe may be holding the gap for a moment */
++    {
++        while (sw_probing)
++        {
++            Sleep(0);
++        }
++        addr = hr_winapi_malloc(size);
++    }
++    if (!addr && sw_give_back && sw_dheap_give_back(1)) /* v4: hand empty dheap blocks back, then ask again */
++    {
++        addr = hr_winapi_malloc(size);
++    }
++    if (addr)
++    {
++        sw_big_alloc(size, addr);
++        return addr;
++    }
++    if ((addr = sw_res_alloc(size)))
++    {
++        sw_count_big(size);
++        sw_printf("RESERVE: no %.1f MB gap left in the 4 GB (largest %.1f MB), so it came from Second Wind's "
++                  "reserve at 0x%08X (reserve in use: %.1f of %.0f MB)",
++                  SW_MB(size), SW_MB(sw_probe_largest()), (unsigned)(size_t)addr, SW_MB(sw_res_used_bytes),
++                  SW_MB(SW_RES_SIZE));
++        if (sw_res_hits == 1)
++        {
++            sw_map("first use of the reserve");
++        }
++        return addr;
++    }
++    sw_big_alloc(size, NULL); /* logs FAILED */
++    sw_map("failed allocation");
++    return NULL;
++}
++
++/*
++ * The size of a direct allocation (over 16 MB). NVHR 4.3 returns 0 for these, so growing one with
++ * realloc copied nothing and lost its contents. Committed pages from the allocation's start; never
++ * less than what was asked for, so realloc copies everything.
++ */
++static size_t sw_big_size(void *addr)
++{
++    MEMORY_BASIC_INFORMATION mbi;
++    BYTE *p;
++    size_t size = 0;
++    if (sw_res_owns(addr))
++    {
++        return sw_res_size(addr);
++    }
++    if (VirtualQuery(addr, &mbi, sizeof(mbi)) != sizeof(mbi) || mbi.AllocationBase != addr ||
++        mbi.Type != MEM_PRIVATE)
++    {
++        return 0;
++    }
++    for (p = (BYTE *)addr; VirtualQuery(p, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.AllocationBase == addr &&
++                           mbi.State == MEM_COMMIT;
++         p += mbi.RegionSize)
++    {
++        size += mbi.RegionSize;
++    }
++    return size;
++}
+diff --git a/heap_replacer/main/sw_stats.h b/heap_replacer/main/sw_stats.h
+new file mode 100644
+index 0000000..c9bfdca
+--- /dev/null
++++ b/heap_replacer/main/sw_stats.h
+@@ -0,0 +1,429 @@
++/*
++ * Second Wind: the summary NVHR's measuring build writes to secondwind-heap.log (see sw_measure.h).
++ * Needs NVHR's two heaps (m, d), so it's included after them. Reads them without locks: the numbers
++ * are a snapshot for people to read, a few cells off at worst, never used to make decisions.
++ * GPL-2.0, like NVHR.
++ */
++#pragma once
++
++#include <psapi.h> /* K32GetMappedFileNameA (kernel32, Windows 7 and newer; Wine has it) */
++
++static size_t sw_dheap_blocks(void)
++{
++    size_t n = 0;
++    for (size_t i = 0u; i < DHEAP_BLOCK_COUNT; i++)
++    {
++        if (d.block_desc[i].addr)
++        {
++            n++;
++        }
++    }
++    return n;
++}
++
++static void sw_pools_detail(void)
++{
++    for (size_t p = 0; p < countof(pool_desc); p++)
++    {
++        struct mpool *pool = m.pools_by_indx[p];
++        if (!pool)
++        {
++            continue;
++        }
++        sw_printf("  pool %4u B: in use %7.1f MB, committed %6.1f of %4.0f MB%s (full %u times)",
++                  (unsigned)pool->item_size, SW_MB(pool->sw_live * pool->item_size),
++                  SW_MB(USUB(pool->cur, pool->bgn)), SW_MB(pool->max_size),
++                  pool->cur == pool->end ? " FULL" : "", (unsigned)pool->sw_full);
++    }
++}
++
++/*
++ * Second Wind v3: who holds the game's 4 GB. Walks the address space one allocation at a time and sorts
++ * each into NVHR's pools, NVHR's dheap, Second Wind's reserve, DLLs and the game (images), mapped files,
++ * and everything else (private: the game's own allocations made around NVHR, DXVK, Wine...). Written
++ * at start, every 30 minutes (v3: every 5), the first time the reserve is used and when an allocation fails.
++ */
++#define SW_TOP 10u
++
++struct sw_alloc
++{
++    BYTE *base;
++    size_t size, committed;
++    DWORD type;
++};
++
++static const char *sw_kind(BYTE *base, DWORD type)
++{
++    size_t i;
++    if (sw_res_owns(base))
++    {
++        return "reserve";
++    }
++    for (i = 0u; i < DHEAP_BLOCK_COUNT; i++)
++    {
++        if (d.block_desc[i].addr == (void *)base)
++        {
++            return "dheap";
++        }
++    }
++    for (i = 0; i < countof(pool_desc); i++)
++    {
++        struct mpool *pool = m.pools_by_indx[i];
++        if (pool && (void *)base == pool->bgn)
++        {
++            return "pools";
++        }
++    }
++    return type == MEM_IMAGE ? "image" : type == MEM_MAPPED ? "mapped" : "private";
++}
++
++static void sw_name(struct sw_alloc *a, char *out, size_t n)
++{
++    char path[MAX_PATH];
++    const char *slash;
++    DWORD len = 0;
++    out[0] = 0;
++    if (a->type == MEM_IMAGE)
++    {
++        len = GetModuleFileNameA((HMODULE)a->base, path, sizeof(path));
++    }
++    else if (a->type == MEM_MAPPED)
++    {
++        len = K32GetMappedFileNameA(GetCurrentProcess(), a->base, path, sizeof(path));
++    }
++    if (len && len < sizeof(path))
++    {
++        path[len] = 0;
++        slash = strrchr(path, '\\');
++        snprintf(out, n, " %s", slash ? slash + 1 : path);
++    }
++}
++
++static void sw_map_walk(const char *why)
++{
++    static const char *kinds[] = {"pools", "dheap", "reserve", "image", "mapped", "private"};
++    size_t total[6] = {0}, comm[6] = {0}, count[6] = {0}, buckets[5] = {0}, bucket_n[5] = {0};
++    static const char *bucket_names[] = {"<1", "1-4", "4-16", "16-64", ">=64"};
++    struct sw_alloc top[SW_TOP] = {{0}}, cur = {0};
++    MEMORY_BASIC_INFORMATION mbi;
++    BYTE *p = (BYTE *)0x10000;
++    size_t free_total = 0, k, i;
++    char name[MAX_PATH + 1];
++    for (;;)
++    {
++        int ok = (size_t)p < 0xFFFF0000u && VirtualQuery(p, &mbi, sizeof(mbi)) == sizeof(mbi);
++        /* close the allocation we were adding up when a new one (or the end) starts */
++        if (cur.base && (!ok || mbi.State == MEM_FREE || mbi.AllocationBase != cur.base))
++        {
++            const char *kind = sw_kind(cur.base, cur.type);
++            for (k = 0; k < 6; k++)
++            {
++                if (!strcmp(kind, kinds[k]))
++                {
++                    break;
++                }
++            }
++            total[k] += cur.size;
++            comm[k] += cur.committed;
++            count[k]++;
++            if (k == 5)
++            {
++                size_t mb = cur.size >> 20;
++                size_t b = mb < 1 ? 0 : mb < 4 ? 1 : mb < 16 ? 2 : mb < 64 ? 3 : 4;
++                buckets[b] += cur.size;
++                bucket_n[b]++;
++            }
++            if (k >= 3) /* the big ones outside NVHR, to name names */
++            {
++                for (i = 0; i < SW_TOP && top[i].size >= cur.size; i++)
++                {
++                }
++                if (i < SW_TOP)
++                {
++                    memmove(&top[i + 1], &top[i], (SW_TOP - 1u - i) * sizeof(top[0]));
++                    top[i] = cur;
++                }
++            }
++            cur.base = NULL;
++        }
++        if (!ok)
++        {
++            break;
++        }
++        if (mbi.State == MEM_FREE)
++        {
++            free_total += mbi.RegionSize;
++        }
++        else
++        {
++            if (!cur.base)
++            {
++                cur.base = mbi.AllocationBase;
++                cur.size = cur.committed = 0;
++                cur.type = mbi.Type;
++            }
++            cur.size += mbi.RegionSize;
++            if (mbi.State == MEM_COMMIT)
++            {
++                cur.committed += mbi.RegionSize;
++            }
++        }
++        if ((BYTE *)mbi.BaseAddress + mbi.RegionSize <= p)
++        {
++            break;
++        }
++        p = (BYTE *)mbi.BaseAddress + mbi.RegionSize;
++    }
++    sw_printf("map (%s): who holds the 4 GB, MB held (committed) in how many allocations:", why);
++    for (k = 0; k < 6; k++)
++    {
++        sw_printf("  %-8s %6.0f (%5.0f) in %u", kinds[k], SW_MB(total[k]), SW_MB(comm[k]), (unsigned)count[k]);
++    }
++    sw_printf("  free     %6.0f", SW_MB(free_total));
++    sw_printf("  private by size (MB): <1 %.0f (%u), 1-4 %.0f (%u), 4-16 %.0f (%u), 16-64 %.0f (%u), >=64 %.0f (%u)",
++              SW_MB(buckets[0]), (unsigned)bucket_n[0], SW_MB(buckets[1]), (unsigned)bucket_n[1],
++              SW_MB(buckets[2]), (unsigned)bucket_n[2], SW_MB(buckets[3]), (unsigned)bucket_n[3],
++              SW_MB(buckets[4]), (unsigned)bucket_n[4]);
++    (void)bucket_names;
++    for (i = 0; i < SW_TOP && top[i].base; i++)
++    {
++        sw_name(&top[i], name, sizeof(name));
++        sw_printf("  big: 0x%08X %6.1f MB (%6.1f committed) %s%s", (unsigned)(size_t)top[i].base,
++                  SW_MB(top[i].size), SW_MB(top[i].committed), sw_kind(top[i].base, top[i].type), name);
++    }
++}
++
++/*
++ * Second Wind v4 (off unless GiveBackHeap=1 in Data\NVHR\secondwind.ini): hand empty dheap blocks back
++ * to Windows. NVHR 4.3 keeps every 16 MB block it ever took; at the end of a measured session the dheap
++ * held 272 MB but used 115. A block is empty when all of it is in its free list. Once a minute, a block
++ * that was already empty a minute ago goes back (so a block emptied and refilled on one loading screen
++ * isn't churned); when a big request finds no gap, every empty block goes back at once (now=1) before
++ * the request asks Windows again. NVHR makes a new block whenever it needs one, as before.
++ *
++ * Safe against other threads: it runs under the dheap's lock, which every change to the free cells
++ * takes. An empty block has no used cells, so no hr_free / hr_mem_size can be working inside it; the
++ * block's range is closed (size 0) before its address is cleared and the memory released.
++ */
++static unsigned char sw_empty_seen[DHEAP_BLOCK_COUNT];
++static volatile LONG sw_gave_back;
++
++/* under the dheap's lock: every byte of block i is in its free list (NVHR doesn't always merge free
++ * neighbours, so an empty block can be several free cells). A cell being handed out or freed is in no
++ * list at that moment, so a block with anything in use or in flight never adds up. */
++static int sw_dheap_block_empty(size_t i)
++{
++    struct cnode *n;
++    size_t free_bytes = 0;
++    if (!d.block_desc[i].addr || !d.addr_array[i])
++    {
++        return 0;
++    }
++    for (n = clist_get_head(&d.addr_list[i]); n != &d.addr_list[i].tail; n = n->next)
++    {
++        free_bytes += get_mcell(n, addr_node)->desc.size;
++    }
++    return free_bytes == DHEAP_BLOCK_SIZE;
++}
++
++static size_t sw_dheap_give_back(int now)
++{
++    size_t i, n = 0;
++    struct mcell *cell;
++    void *addr;
++    rlock_lock(&d.lock);
++    for (i = 0; i < DHEAP_BLOCK_COUNT; i++)
++    {
++        if (!sw_dheap_block_empty(i))
++        {
++            sw_empty_seen[i] = 0;
++            continue;
++        }
++        if (!now && !sw_empty_seen[i])
++        {
++            sw_empty_seen[i] = 1; /* empty now; goes back if it's still empty in a minute */
++            continue;
++        }
++        addr = d.block_desc[i].addr;
++        while (!clist_is_empty(&d.addr_list[i]))
++        {
++            cell = get_mcell(clist_get_head(&d.addr_list[i]), addr_node);
++            dheap_rmv_free_cell(&d, cell);
++            hr_free(cell);
++        }
++        d.block_desc[i].size = 0; /* close the range first: dheap_get_block_index reads it without the lock */
++        MemoryBarrier();
++        d.block_desc[i].addr = NULL;
++        d.block_desc[i].index = 0;
++        MemoryBarrier();
++        hr_winapi_free(d.addr_array[i]);
++        hr_winapi_free(d.used_cells[i]);
++        d.addr_array[i] = NULL;
++        d.used_cells[i] = NULL;
++        hr_winapi_free(addr);
++        sw_empty_seen[i] = 0;
++        n++;
++    }
++    rlock_unlock(&d.lock);
++    if (n)
++    {
++        InterlockedExchangeAdd(&sw_gave_back, (LONG)n);
++        sw_printf("GAVE BACK: %u empty dheap block(s), %u MB, to Windows (%s)", (unsigned)n,
++                  (unsigned)(n * (DHEAP_BLOCK_SIZE >> 20)), now ? "a big request found no gap" : "empty for a minute");
++    }
++    return n;
++}
++
++/* v4: how long the map takes, to tell whether it's behind a frame-rate dip */
++static void sw_map(const char *why)
++{
++    LARGE_INTEGER t0;
++    QueryPerformanceCounter(&t0);
++    sw_map_walk(why);
++    sw_printf("  (the map took %.1f ms)", sw_ms_since(&t0));
++}
++
++static void sw_summary(int detail, int map)
++{
++    struct sw_va va;
++    size_t pool_use = 0, pool_commit = 0, pool_reserved = 0, full = 0, largest;
++    LARGE_INTEGER t0;
++    double took;
++    for (size_t p = 0; p < countof(pool_desc); p++)
++    {
++        struct mpool *pool = m.pools_by_indx[p];
++        if (!pool)
++        {
++            continue;
++        }
++        pool_use += pool->sw_live * pool->item_size;
++        pool_commit += USUB(pool->cur, pool->bgn);
++        pool_reserved += pool->max_size;
++        full += pool->cur == pool->end;
++    }
++    QueryPerformanceCounter(&t0);
++    sw_va_scan(&va);
++    largest = sw_probe_largest();
++    took = sw_ms_since(&t0);
++    sw_printf("min=%u pools=%.0f/%.0f/%.0f dheap=%.0f/%.0f big=%.0f(%ld) bigfail=%ld poolsfull=%u "
++              "va_free=%.0f largest=%.1f va_reserved=%.0f va_committed=%.0f reserve=%.0f/%.0f(%ld) "
++              "bigtotal=%ld/%ld/%ld gaveback=%ld took=%.1fms",
++              (unsigned)((GetTickCount() - sw_start_tick) / 60000u), SW_MB(pool_use), SW_MB(pool_commit),
++              SW_MB(pool_reserved), SW_MB(sw_dheap_used_bytes), SW_MB(sw_dheap_blocks() * DHEAP_BLOCK_SIZE),
++              SW_MB(sw_big_live_bytes), sw_big_live_count, sw_big_failed, (unsigned)full, SW_MB(va.free_total),
++              SW_MB(largest), SW_MB(va.reserved), SW_MB(va.committed), SW_MB(sw_res_used_bytes),
++              sw_res_base ? SW_MB(SW_RES_SIZE) : 0.0, sw_res_hits, sw_big_by_size[0], sw_big_by_size[1],
++              sw_big_by_size[2], sw_gave_back, took);
++    if (detail)
++    {
++        sw_pools_detail();
++    }
++    if (map)
++    {
++        sw_map(map == 1 ? "at start" : "every 30 minutes");
++    }
++}
++
++static DWORD WINAPI sw_thread(LPVOID unused)
++{
++    unsigned n = 0;
++    for (;;)
++    {
++        Sleep(60000);
++        n++;
++        if (sw_give_back)
++        {
++            sw_dheap_give_back(0);
++        }
++        sw_summary(n % 5 == 0, n % 30 == 0 ? 2 : 0);
++    }
++    return 0;
++}
++
++/* v4: Data\NVHR\secondwind.ini, next to this DLL's files (the game runs from its own folder) */
++static void sw_read_settings(void)
++{
++    char path[MAX_PATH];
++    DWORD n = GetCurrentDirectoryA(MAX_PATH - 40u, path);
++    if (n && n < MAX_PATH - 40u)
++    {
++        strcpy(path + n, "\\Data\\NVHR\\secondwind.ini");
++        sw_give_back = (int)GetPrivateProfileIntA("Second Wind", "GiveBackHeap", 0, path);
++    }
++}
++
++static void sw_start(void)
++{
++    sw_log = fopen("secondwind-heap.log", "w");
++    sw_start_tick = GetTickCount();
++    sw_read_settings();
++    sw_printf("Second Wind NVHR v4 (NVHR 4.3 + counters, right-sized pools, reserve for big requests). One line a minute:");
++    sw_printf("  pools=in use/committed/reserved MB  dheap=in use/blocks MB  big=direct allocs MB(count)");
++    sw_printf("  largest=largest piece Windows will really give (MB, asked, not read off the map): NVHR needs 16 for a new dheap block");
++    sw_printf("  reserve=in use/size MB(times used): space set aside at start for requests over 16 MB");
++    sw_printf("  bigtotal=requests over 16 MB so far: 16-32/32-64/64+ MB  gaveback=empty dheap blocks handed back  took=ms for this line");
++    sw_printf("  giving empty dheap blocks back: %s", sw_give_back ? "on (GiveBackHeap=1 in Data\\NVHR\\secondwind.ini)" : "off");
++    if (!sw_res_base)
++    {
++        sw_printf("  the reserve couldn't be set aside (no %u MB gap at start-up): running like v2", SW_RES_SIZE >> 20);
++    }
++    sw_summary(1, 1);
++    CreateThread(NULL, 0, sw_thread, NULL, 0, NULL);
++}
++
++/*
++ * v4: from DllMain when the game exits through ExitProcess (a hard crash never gets here; a crash
++ * logger that ends the game itself might, so FOLM still checks for crash logs).
++ * By then Windows has stopped the other threads, maybe mid-sw_printf holding the log's lock, so this
++ * writes with WriteFile on the file's handle and formats by hand: no CRT locks, no hang on quit.
++ */
++#include <io.h>
++static char *sw_put_num(char *o, unsigned v, int width)
++{
++    char tmp[12];
++    int n = 0;
++    do
++    {
++        tmp[n++] = (char)('0' + v % 10u);
++        v /= 10u;
++    } while (v);
++    while (n < width)
++    {
++        tmp[n++] = '0';
++    }
++    while (n)
++    {
++        *o++ = tmp[--n];
++    }
++    return o;
++}
++
++static void sw_stop(void)
++{
++    char line[96], *o = line;
++    const char *msg = " game exited after ", *p;
++    SYSTEMTIME t;
++    HANDLE h;
++    DWORD w;
++    if (!sw_log || (h = (HANDLE)_get_osfhandle(_fileno(sw_log))) == INVALID_HANDLE_VALUE)
++    {
++        return;
++    }
++    GetLocalTime(&t);
++    o = sw_put_num(o, t.wHour, 2);
++    *o++ = ':';
++    o = sw_put_num(o, t.wMinute, 2);
++    *o++ = ':';
++    o = sw_put_num(o, t.wSecond, 2);
++    for (p = msg; *p; p++)
++    {
++        *o++ = *p;
++    }
++    o = sw_put_num(o, (unsigned)((GetTickCount() - sw_start_tick) / 60000u), 1);
++    for (p = " min\r\n"; *p; p++)
++    {
++        *o++ = *p;
++    }
++    SetFilePointer(h, 0, NULL, FILE_END);
++    WriteFile(h, line, (DWORD)(o - line), &w, NULL);
++}
+diff --git a/heap_replacer/mheap/mheap.h b/heap_replacer/mheap/mheap.h
+index b1cce89..73c7d0b 100644
+--- a/heap_replacer/mheap/mheap.h
++++ b/heap_replacer/mheap/mheap.h
+@@ -11,16 +11,24 @@ struct pool_data
+ };
+ 
+ /* POOLS SIZE MUST BE A MULTIPLE OF POOL_ALIGN !!! */
++/*
++ * Second Wind v2: each pool reserves about twice what it really used in a measured 55-minute TTW session
++ * with heavy LOD (2026-11-22), in 16 MB steps, instead of NVHR 4.3's fixed sizes. That gives back about
++ * 450 MB of the game's 4 GB, which NVHR 4.3 kept reserved but never used. A pool that does fill up hands
++ * its requests to the next bigger pool and then the dheap, exactly as in NVHR 4.3.
++ * NVHR 4.3's sizes, in order: 32 32 32 16 16 16 16 16 16 16 16 128 128 32 32 32 32 32 16 32 16 64 32 64 16 16
++ * 32 64 64 16 32 16 32 32 MB (1184 MB in all; now 736 MB).
++ */
+ struct pool_data pool_desc[] = {
+-    {8u, 32u * MB},    {12u, 32u * MB},   {16u, 32u * MB},   {20u, 16u * MB},
++    {8u, 32u * MB},    {12u, 32u * MB},   {16u, 16u * MB},   {20u, 16u * MB},
+     {24u, 16u * MB},   {28u, 16u * MB},   {32u, 16u * MB},   {40u, 16u * MB},
+-    {48u, 16u * MB},   {56u, 16u * MB},   {64u, 16u * MB},   {80u, 128u * MB},
+-    {96u, 128u * MB},  {112u, 32u * MB},  {128u, 32u * MB},  {160u, 32u * MB},
+-    {192u, 32u * MB},  {224u, 32u * MB},  {256u, 16u * MB},  {320u, 32u * MB},
+-    {384u, 16u * MB},  {448u, 64u * MB},  {512u, 32u * MB},  {640u, 64u * MB},
+-    {768u, 16u * MB},  {896u, 16u * MB},  {1024u, 32u * MB}, {1280u, 64u * MB},
+-    {1536u, 64u * MB}, {1792u, 16u * MB}, {2048u, 32u * MB}, {2560u, 16u * MB},
+-    {3072u, 32u * MB}, {3584u, 32u * MB},
++    {48u, 16u * MB},   {56u, 16u * MB},   {64u, 16u * MB},   {80u, 48u * MB},
++    {96u, 64u * MB},   {112u, 16u * MB},  {128u, 16u * MB},  {160u, 16u * MB},
++    {192u, 16u * MB},  {224u, 32u * MB},  {256u, 16u * MB},  {320u, 16u * MB},
++    {384u, 16u * MB},  {448u, 32u * MB},  {512u, 16u * MB},  {640u, 32u * MB},
++    {768u, 16u * MB},  {896u, 16u * MB},  {1024u, 16u * MB}, {1280u, 32u * MB},
++    {1536u, 32u * MB}, {1792u, 16u * MB}, {2048u, 16u * MB}, {2560u, 16u * MB},
++    {3072u, 16u * MB}, {3584u, 16u * MB},
+ };
+ 
+ struct mheap
+diff --git a/heap_replacer/mheap/mpool.h b/heap_replacer/mheap/mpool.h
+index 8183f24..455d09b 100644
+--- a/heap_replacer/mheap/mpool.h
++++ b/heap_replacer/mheap/mpool.h
+@@ -29,6 +29,9 @@ struct mpool
+     size_t index;
+ 
+     struct nlock lock;
++
++    size_t sw_live; /* Second Wind: cells in use */
++    size_t sw_full; /* Second Wind: times it was full */
+ };
+ 
+ void mpool_init(struct mpool *pool, size_t item_size, size_t max_size,
+@@ -121,6 +124,7 @@ void *mpool_malloc(struct mpool *pool, size_t size)
+     {
+         if (pool->cur == pool->end)
+         {
++            pool->sw_full++; /* Second Wind */
+             nlock_unlock(&pool->lock);
+             return NULL;
+         }
+@@ -131,6 +135,7 @@ void *mpool_malloc(struct mpool *pool, size_t size)
+ 
+     old_free = pool->next_free;
+     pool->next_free = pool->next_free->next;
++    pool->sw_live++; /* Second Wind */
+ 
+     nlock_unlock(&pool->lock);
+ 
+@@ -155,6 +160,7 @@ void mpool_free(struct mpool *pool, void *addr)
+     {
+         c->next = pool->next_free;
+         pool->next_free = c;
++        pool->sw_live--; /* Second Wind */
+     }
+ 
+     nlock_unlock(&pool->lock);
+diff --git a/heap_replacer/sheap/sheap.h b/heap_replacer/sheap/sheap.h
+index 9f4e03c..32e58a2 100644
+--- a/heap_replacer/sheap/sheap.h
++++ b/heap_replacer/sheap/sheap.h
+@@ -20,7 +20,7 @@ struct sheap
+     struct schnk *last;
+ };
+ 
+-void sheap_purge(struct sheap *heap, void *edx);
++void HR_GAMECALL sheap_purge(struct sheap *heap, void *edx);
+ 
+ void sheap_init(struct sheap *heap)
+ {
+@@ -30,17 +30,17 @@ void sheap_init(struct sheap *heap)
+     heap->last = NULL;
+ }
+ 
+-void sheap_init_fix(struct sheap *heap, void *edx)
++void HR_GAMECALL sheap_init_fix(struct sheap *heap, void *edx)
+ {
+     sheap_init(heap);
+ }
+ 
+-void sheap_init_var(struct sheap *heap, void *edx, size_t size)
++void HR_GAMECALL sheap_init_var(struct sheap *heap, void *edx, size_t size)
+ {
+     sheap_init(heap);
+ }
+ 
+-void *sheap_alloc(struct sheap *heap, void *edx, size_t size, size_t align)
++void *HR_GAMECALL sheap_alloc(struct sheap *heap, void *edx, size_t size, size_t align)
+ {
+     struct schnk *hdr;
+     int i = heap->last ? heap->last->index : 0;
+@@ -84,7 +84,7 @@ void *sheap_alloc(struct sheap *heap, void *edx, size_t size, size_t align)
+     return hdr;
+ }
+ 
+-void sheap_free(struct sheap *heap, void *edx, void *addr)
++void HR_GAMECALL sheap_free(struct sheap *heap, void *edx, void *addr)
+ {
+     int i, j = 0;
+     struct schnk *chunk = (struct schnk *)VSUB(addr, sizeof(struct schnk));
+@@ -112,7 +112,7 @@ void sheap_free(struct sheap *heap, void *edx, void *addr)
+     }
+ }
+ 
+-void sheap_purge(struct sheap *heap, void *edx)
++void HR_GAMECALL sheap_purge(struct sheap *heap, void *edx)
+ {
+     int i;
+ 
+@@ -133,9 +133,9 @@ void sheap_purge(struct sheap *heap, void *edx)
+     hr_free(heap->blocks);
+ }
+ 
+-struct sheap *sheap_get_thread_local(void)
++struct sheap *HR_GAMECALL sheap_get_thread_local(void)
+ {
+-    static __declspec(thread) struct sheap *heap = NULL;
++    static HR_THREAD_LOCAL struct sheap *heap = NULL;  /* Second Wind: portable thread-local */
+     DWORD id;
+ 
+     if (!heap)

@@ -60,14 +60,16 @@ def read_header(path):
     return info
 
 
-def sort_plugins(plugins, preferred, edition="courier", extra_after=None, group_rank=None):
+def sort_plugins(plugins, preferred, edition="courier", extra_after=None, group_rank=None, last=()):
     """Order plugin names for loading. Returns (ordered_names, problems).
 
     Hard rules, never broken: a plugin loads after its masters; ESMs (master-flagged)
     load before ESPs; extra_after[p] (e.g. LOOT load-after/requirement rules) loads p
     after those plugins. Among plugins that are free to go next, the lowest
     group_rank goes first (LOOT groups), then the vanilla order, then `preferred`
-    (the player's order), then name.
+    (the player's order), then name. `last` (the player's "load at the end" list, in order) goes after
+    everything else that's free to load, so a plugin that must be last (a weather overhaul) stays last
+    however many plugins are added later; masters still come first.
     """
     extra_after = extra_after or {}
     group_rank = group_rank or {}
@@ -79,6 +81,7 @@ def sort_plugins(plugins, preferred, edition="courier", extra_after=None, group_
     pos = {n: i for i, n in enumerate(wish)}
     is_m = lambda n: n.lower().endswith(".esm") or bool(plugins[n].get("is_master"))
     van = set(vanilla)
+    at_end = {lower[p.lower()]: i + 1 for i, p in enumerate(last) if p.lower() in lower}
 
     problems = set()
     need = {n: set() for n in plugins}
@@ -93,7 +96,8 @@ def sort_plugins(plugins, preferred, edition="courier", extra_after=None, group_
             if d and d != n and not (is_m(d) is False and is_m(n)):   # an ESM can't wait for an ESP
                 need[n].add(d)
     esps_wait = [n for n in plugins if is_m(n)]        # every ESP waits for every ESM
-    key = lambda n: (0 if n in van else 1, not is_m(n), 0 if n in van else group_rank.get(n, 0), pos[n])
+    key = lambda n: (0 if n in van else 1, not is_m(n), at_end.get(n, 0),
+                     0 if n in van else group_rank.get(n, 0), pos[n])
     done, order = set(), []
     remaining = set(plugins)
     while remaining:

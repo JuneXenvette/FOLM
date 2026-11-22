@@ -22,7 +22,7 @@ from collections import defaultdict
 from . import deploy as dep
 from . import plugins as plg
 
-AREAS = ("Deployed files", "Plugins", "Requirements", "Script extender plugins", "Last launch", "Graphics (Proton)",
+AREAS = ("Essentials", "Deployed files", "Plugins", "Requirements", "Script extender plugins", "Last launch", "Graphics (Proton)",
          "Folders")
 EXTENDER = {"courier": ("NVSE", "nvse.log", "xNVSE"), "wanderer": ("FOSE", "fose.log", "FOSE")}
 GRAPHICS_DLLS = ("d3d9.dll", "d3d11.dll", "dxgi.dll", "d3d8.dll", "opengl32.dll")
@@ -361,7 +361,7 @@ def check(m):
     m.need()
     import json
     manifest = json.load(open(m.manifest)) if m.deployed else {"files": []}
-    out = []
+    out = _essentials(m)
     if not m.deployed:
         out.append(_f("warn", "Deployed files", "Mods aren't deployed, so only the game's own files were checked.",
                       "Deploy, then run the health check again."))
@@ -375,6 +375,24 @@ def check(m):
     out += _last_launch(m, dlls)
     out += _graphics(m, manifest)
     out += _case_twins(m)
+    return out
+
+
+def _essentials(m):
+    """The mods nearly every setup needs (folm_core/essentials.py): installed, or where to get them.
+    Missing "needed" ones are warnings, missing "recommended" ones notes."""
+    from . import essentials
+    out = []
+    for e in essentials.check(m):
+        uses = f" FOLM uses it for {e['used_by']}." if e["used_by"] else ""
+        if e["have"]:
+            out.append(_f("ok", "Essentials", f"{e['name']}: installed.{uses}"))
+        elif e["have"] is None:
+            out.append(_f("info", "Essentials", f"{e['name']}: FOLM can't tell whether it's applied. {e['why']}",
+                          f"Get it: {e['url']}"))
+        else:
+            out.append(_f("warn" if e["level"] == "needed" else "info", "Essentials",
+                          f"{e['name']}: not installed. {e['why']}{uses}", f"Get it: {e['url']}"))
     return out
 
 

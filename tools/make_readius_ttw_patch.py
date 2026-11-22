@@ -12,8 +12,8 @@ The old "Readius TTW Fix" (2015, TTW 2.x) rewrote those TTW quests with their TT
 which would roll back TTW 3's changes. This patch edits no TTW record. It overrides only Readius's
 own quest script, adding two checks near the top of its GameMode block:
 
-    if GetQuestRunning CG02 || GetQuestRunning CG03 || GetQuestRunning CG04
-        return                      ; Vault 101 childhood: leave TTW's scenes alone
+    if GetQuestRunning CG02 || GetQuestRunning CG03 || GetQuestRunning CG04 || (GetStage CG02 > 0 && GetQuestCompleted CG04 == 0)
+        return                      ; Vault 101 childhood, including the gaps between its scenes
     endif
     if Init == 2                    ; Readius already active, and a script put the Pip-Boy back on
         if player.GetEquipped PipBoy == 1 || player.GetEquipped PimpBoy == 1 || player.GetEquipped PipBoyGlove == 1
@@ -40,10 +40,12 @@ SCRIPT_ID = 0x01000ADD                     # BIDEpipRemoverNVSCRIPT in Readius_N
 MASTERS = ["FalloutNV.esm", "Fallout3.esm", "Readius_NV.esp"]
 CG02, CG03, CG04 = 0x00014E84, 0x01014E85, 0x01014E86      # in the patch's master numbering
 GET_QUEST_RUNNING, GET_EQUIPPED, UNEQUIP_ITEM = 0x1038, 0x10B6, 0x10EF
+GET_STAGE, GET_QUEST_COMPLETED = 0x103A, 0x1222       # both checked against TTW's compiled scripts
 SOURCE_ANCHOR = "\t; Initialize the player by removing the Pipboy and glove,"
 SOURCE_ADD = """\t; --- Readius TTW Patch (FOLM) ---
-\t; Vault 101 childhood (TTW Fallout 3 start): leave TTW's scripted scenes alone
-\tif GetQuestRunning CG02 || GetQuestRunning CG03 || GetQuestRunning CG04
+\t; Vault 101 childhood (TTW Fallout 3 start): leave TTW's scripted scenes alone until the escape is done,
+\t; including the moments between the birthday, the G.O.A.T. and the escape
+\tif GetQuestRunning CG02 || GetQuestRunning CG03 || GetQuestRunning CG04 || (GetStage CG02 > 0 && GetQuestCompleted CG04 == 0)
 \t\treturn
 \tendif
 \t; Already active and a script put the Pip-Boy back on (e.g. leaving Tranquility Lane): take it off again
@@ -102,7 +104,11 @@ def patched_script(rec):
                                         ref=player)
     set_strip = sc.Statement(sc.SET, sc.local("s", strip) + struct.pack("<H", 2) + b" 1")
     add = [
-        sc.if_(sc.IF, sc.expr(running(cg02), running(cg03), "||", running(cg04), "||")),
+        # Readius used to swap in the gaps between the Vault 101 scenes (birthday -> G.O.A.T. -> escape),
+        # so the arm Pip-Boy went missing in the vault: wait until the escape is completed.
+        sc.if_(sc.IF, sc.expr(running(cg02), running(cg03), "||", running(cg04), "||",
+                              sc.call(GET_STAGE, sc.ref(cg02)), "0", ">",
+                              sc.call(GET_QUEST_COMPLETED, sc.ref(cg04)), "0", "==", "&&", "||")),
         sc.Statement(sc.RETURN),
         sc.Statement(sc.ENDIF),
         sc.if_(sc.IF, sc.expr(sc.local("s", init), "2", "==")),
@@ -145,7 +151,7 @@ def header(readius):
     subs = [Subrecord(b"HEDR", struct.pack("<fII", 1.34, 1, 0x800)),
             Subrecord(b"CNAM", b"FOLM\0"),
             Subrecord(b"SNAM", b"Pip-Boy Readius for Tale of Two Wastelands 3.x. Overrides only Readius's own "
-                               b"script: waits during the Vault 101 childhood and takes the arm Pip-Boy off again "
+                               b"script: waits until the Vault 101 escape is done and takes the arm Pip-Boy off again "
                                b"when a TTW script puts it back on. Made on your PC by FOLM from your Readius_NV.esp.\0")]
     for m in MASTERS:
         subs += [Subrecord(b"MAST", m.encode() + b"\0"), Subrecord(b"DATA", b"\0" * 8)]

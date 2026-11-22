@@ -4,6 +4,7 @@
 Run:  .venv/bin/python folm_gui.py            (FOLM_HOME env var picks another data folder)
 """
 
+import html
 import os
 import re
 import sys
@@ -13,18 +14,20 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, Signal, Slot, QUrl, qVersion                  # noqa: E402
-from PySide6.QtGui import QActionGroup, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPixmap, QShortcut      # noqa: E402
+from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, Signal, Slot, QUrl, qVersion                  # noqa: E402
+from PySide6.QtGui import (QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPalette, QPixmap,  # noqa: E402
+                           QShortcut)
 from PySide6.QtWidgets import (                                         # noqa: E402
-    QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
-    QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView, QRadioButton, QScrollArea,
+    QAbstractButton, QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
+    QDialogButtonBox, QFileDialog, QFontComboBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QRadioButton,
+    QScrollArea, QSpinBox, QTextBrowser,
     QInputDialog, QLabel, QLineEdit, QListWidget, QMainWindow, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QSplitter, QTabWidget, QToolBar, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from folm_core.manager import CATEGORIES, EDITIONS, FolmError, Manager  # noqa: E402
-from folm_core import version                                          # noqa: E402
+from folm_core import appprefs, helpdocs, look as look_mod, version                        # noqa: E402
 
 APP_NAME = "FOLM"
 EDITION_LABELS = {"courier": "Courier — New Vegas", "wanderer": "Wanderer — Fallout 3"}
@@ -186,6 +189,51 @@ class ModList(QTreeWidget):
         self.order_changed.emit()
 
 
+class OptimizeDialog(QDialog):
+    """⚡ Optimize: the fixes for problems nearly everyone has playing these games on Linux."""
+
+    def __init__(self, win):
+        super().__init__(win)
+        from folm_core import optimize
+        self.win, self.optimize = win, optimize
+        self.setWindowTitle("Optimize for Linux")
+        self.resize(640, 480)
+        lay = QVBoxLayout(self)
+        intro = QLabel("Fixes for problems that happen to nearly everyone playing on Linux. Each one can be "
+                       "turned off again here or in the Settings tab, and turning it off undoes it.")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+        self.boxes = {}
+        for fx in optimize.check(win.m):
+            box = QCheckBox(fx["name"])
+            f = box.font()
+            f.setBold(True)
+            box.setFont(f)
+            box.setChecked(fx["on"])
+            box.setEnabled(fx["available"])
+            why = QLabel(f"{fx['why']}<br><i>Now: {fx['state']}</i>")
+            why.setWordWrap(True)
+            why.setContentsMargins(24, 0, 0, 8)
+            lay.addWidget(box)
+            lay.addWidget(why)
+            self.boxes[fx["key"]] = (box, fx)
+        lay.addStretch(1)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        rec = bb.addButton("Turn on all recommended", QDialogButtonBox.ActionRole)
+        rec.clicked.connect(self.recommended)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def recommended(self):
+        for box, fx in self.boxes.values():
+            if fx["available"] and fx["recommended"]:
+                box.setChecked(True)
+
+    def choices(self):
+        return {k: box.isChecked() for k, (box, fx) in self.boxes.items() if fx["available"]}
+
+
 class HealthDialog(QDialog):
     """Mod health check results, grouped by area."""
     ICON = {"ok": "✅", "warn": "⚠️", "error": "✖", "info": "ℹ️"}
@@ -219,13 +267,498 @@ class HealthDialog(QDialog):
                 top.addChild(it)
                 if r["fix"] and r["status"] != "ok":
                     fx = QTreeWidgetItem(["", "→ " + r["fix"]])
-                    fx.setForeground(1, QColor("#8a8a8a"))
+                    url = re.search(r"https?://\S+", r["fix"])
+                    if url:
+                        fx.setData(1, Qt.UserRole, url.group(0))
+                        fx.setToolTip(1, "Double-click to open the page")
+                        fx.setForeground(1, QApplication.palette().color(QPalette.Link))
+                    else:
+                        fx.setForeground(1, QColor("#8a8a8a"))
                     top.addChild(fx)
             top.setExpanded(worst != "ok")
+        tree.itemDoubleClicked.connect(
+            lambda it, _c: it.data(1, Qt.UserRole) and QDesktopServices.openUrl(QUrl(it.data(1, Qt.UserRole))))
         lay.addWidget(tree)
         bb = QDialogButtonBox(QDialogButtonBox.Close)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
+
+
+class ModListDialog(QDialog):
+    """A mod list: which downloads are there (ticks off as they arrive), which are missing, install the rest."""
+    ICON = {"installed": "✔", "ready": "●", "missing": "✖"}
+    TEXT = {"installed": "Installed", "ready": "Ready", "missing": "Missing"}
+
+    def __init__(self, win, lst, folder):
+        super().__init__(win)
+        self.win, self.lst, self.folder = win, lst, folder
+        self.setWindowTitle(f"Mod list: {lst['name']}")
+        self.resize(980, 600)
+        lay = QVBoxLayout(self)
+        if lst.get("about"):
+            about = QLabel(lst["about"])
+            about.setWordWrap(True)
+            lay.addWidget(about)
+        row = QHBoxLayout()
+        self.where = QLabel()
+        row.addWidget(self.where, 1)
+        change = QPushButton("Change folder…")
+        change.clicked.connect(self.change_folder)
+        row.addWidget(change)
+        lay.addLayout(row)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["#", "Mod", "Status", "Download / where to get it"])
+        self.tree.setRootIsDecorated(False)
+        self.tree.setColumnWidth(0, 40)
+        self.tree.setColumnWidth(1, 330)
+        self.tree.setColumnWidth(2, 110)
+        self.tree.itemDoubleClicked.connect(self.open_row)
+        lay.addWidget(self.tree)
+        self.summary = QLabel()
+        lay.addWidget(self.summary)
+        bb = QDialogButtonBox()
+        self.open_btn = bb.addButton("Open missing pages", QDialogButtonBox.ActionRole)
+        self.open_btn.clicked.connect(self.open_missing)
+        self.install_btn = bb.addButton("Install", QDialogButtonBox.AcceptRole)
+        self.install_btn.clicked.connect(self.accept)
+        bb.addButton(QDialogButtonBox.Close).clicked.connect(self.reject)
+        lay.addWidget(bb)
+        self.watch = QFileSystemWatcher(self)                 # tick files off as downloads finish
+        self.watch.directoryChanged.connect(lambda _p: self.fill())
+        self.set_folder(folder)
+
+    def set_folder(self, folder):
+        if self.watch.directories():
+            self.watch.removePaths(self.watch.directories())
+        self.folder = folder
+        if os.path.isdir(folder):
+            self.watch.addPath(folder)
+        self.where.setText(f"Looking for the downloads in <b>{folder}</b> (and its subfolders). "
+                           "Download with Nexus's <b>Manual download</b> button; this list updates by itself.")
+        self.fill()
+
+    def change_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "Where are the downloads?", self.folder)
+        if d:
+            self.set_folder(d)
+
+    def fill(self):
+        from folm_core import modlist
+        self.rows = modlist.status(self.win.m, self.lst, self.folder)
+        self.tree.clear()
+        for i, r in enumerate(self.rows, 1):
+            e = r["entry"]
+            where = os.path.basename(r["file"]) if r["state"] == "ready" else \
+                (f"already installed as '{r['installed_as']}'" if r["state"] == "installed" else
+                 f"{e['file']}  —  double-click to open {r['link']}" if r["link"] else f"{e['file']} (no link)")
+            it = QTreeWidgetItem([str(i), e["name"], f"{self.ICON[r['state']]} {self.TEXT[r['state']]}", where])
+            it.setForeground(2, WIN if r["state"] != "missing" else LOSE)
+            tip = e["note"] or ""
+            if e["remove"]:
+                tip += ("\n" if tip else "") + "Left out of the install: " + ", ".join(e["remove"])
+            if tip:
+                for c in range(4):
+                    it.setToolTip(c, tip)
+            self.tree.addTopLevelItem(it)
+        n = {k: sum(r["state"] == k for r in self.rows) for k in self.TEXT}
+        self.summary.setText(f"{len(self.rows)} mods: {n['ready']} ready to install, {n['missing']} missing, "
+                             f"{n['installed']} already installed.")
+        self.install_btn.setText(f"Install {n['ready']} ready mod{'s' if n['ready'] != 1 else ''}")
+        self.install_btn.setEnabled(bool(n["ready"]))
+        self.open_btn.setEnabled(any(r["state"] == "missing" and r["link"] for r in self.rows))
+
+    def open_row(self, it, _col):
+        r = self.rows[int(it.text(0)) - 1]
+        if r["state"] == "missing" and r["link"]:
+            QDesktopServices.openUrl(QUrl(r["link"]))
+
+    def open_missing(self):
+        links = list(dict.fromkeys(r["link"] for r in self.rows if r["state"] == "missing" and r["link"]))
+        for u in links[:15]:                                   # one tab per page, not a hundred at once
+            QDesktopServices.openUrl(QUrl(u))
+
+
+class HelpPane(QWidget):
+    """A help tab: categories that open into topics on the left, the chosen topic on the right,
+    and a search box that keeps only the topics mentioning every word typed."""
+
+    def __init__(self, name, intro):
+        super().__init__()
+        v = QVBoxLayout(self)
+        v.addWidget(QLabel(intro))
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.filter)
+        v.addWidget(self.search)
+        split = QSplitter()
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.currentItemChanged.connect(self.show_topic)
+        self.tree.itemClicked.connect(lambda it, _c: it.setExpanded(not it.isExpanded()) if it.childCount() else None)
+        self.text = QTextBrowser()
+        self.text.setOpenExternalLinks(True)
+        split.addWidget(self.tree)
+        split.addWidget(self.text)
+        split.setSizes([260, 460])
+        v.addWidget(split, 1)
+        bold = QFont()
+        bold.setBold(True)
+        for cat, topics in helpdocs.read(name):
+            c = QTreeWidgetItem([cat])
+            c.setFont(0, bold)
+            self.tree.addTopLevelItem(c)
+            for title, body in topics:
+                t = QTreeWidgetItem([title])
+                t.setData(0, Qt.UserRole, f"## {title}\n\n{body}")
+                c.addChild(t)
+        self.text.setMarkdown("Pick a topic on the left.")
+
+    def show_topic(self, it, _prev=None):
+        if it is None:
+            return
+        md = it.data(0, Qt.UserRole)
+        if md is None:                                    # a category: list what's in it
+            md = f"## {it.text(0)}\n\n" + "\n".join(f"- {it.child(i).text(0)}" for i in range(it.childCount()))
+        self.text.setMarkdown(md)
+
+    def filter(self, words):
+        words = words.lower().split()
+        for i in range(self.tree.topLevelItemCount()):
+            c = self.tree.topLevelItem(i)
+            shown = 0
+            for j in range(c.childCount()):
+                t = c.child(j)
+                hit = all(w in t.data(0, Qt.UserRole).lower() for w in words)
+                t.setHidden(not hit)
+                shown += hit
+            c.setHidden(not shown)
+            c.setExpanded(bool(words) and shown > 0)
+
+
+class SaveDialog(QDialog):
+    """A save's plugins, in the order it was made with: on now, installed but off, or not installed, each
+    with a link to where to get it (the mod's Nexus page, LOOT's link, or a Nexus search)."""
+
+    def __init__(self, win, r):
+        super().__init__(win)
+        import time
+        self.setWindowTitle(os.path.splitext(r["name"])[0])
+        self.resize(980, 720)
+        m = win.m
+        active = {p.lower() for p in r["plugins"]} - {p.lower() for p in r["missing"]}
+        src = m.plugin_sources(r["plugins"])
+        v = QVBoxLayout(self)
+        made = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["time"]))
+        n_miss = len(r["missing"])
+        fits = ("It fits profile " + ", ".join(f"“{html.escape(n)}”" for n in r["fits"]) + ". ") if r["fits"] else ""
+        head = QLabel(f"<b>{html.escape(os.path.splitext(r['name'])[0])}</b> — made {made}, with "
+                      f"{len(r['plugins'])} plugins. Checked against profile “{html.escape(m.active)}”: "
+                      + (f"<span style='color:#d9534f'><b>{n_miss} missing</b></span>. {fits}"
+                         if n_miss else "<span style='color:#3fa34d'><b>all on</b></span>. ")
+                      + "Click a link to open the mod's page in your browser.")
+        head.setWordWrap(True)
+        v.addWidget(head)
+        self.only = QCheckBox(f"Show only the {n_miss} missing")
+        self.only.setChecked(bool(n_miss))
+        self.only.setVisible(bool(n_miss))
+        self.only.toggled.connect(self.filter)
+        v.addWidget(self.only)
+        t = self.tree = QTreeWidget()
+        t.setHeaderLabels(["#", "Plugin", "Now", "Installed as", "Where to get it"])
+        t.setRootIsDecorated(False)
+        t.setAlternatingRowColors(True)
+        t.itemDoubleClicked.connect(lambda it, _c: it.data(4, Qt.UserRole)
+                                    and QDesktopServices.openUrl(QUrl(it.data(4, Qt.UserRole))))
+        red, orange = QColor("#d9534f"), LOSE
+        for i, p in enumerate(r["plugins"]):
+            info = src.get(p, {})
+            if p.lower() in active:
+                now, color = "✔ on", WIN
+            elif info.get("mod"):
+                now, color = "✖ off (installed)", orange
+            else:
+                now, color = "✖ not installed", red
+            it = QTreeWidgetItem([f"{i:02X}", p, now, info.get("mod") or "", ""])
+            it.setForeground(2, color)
+            if p.lower() not in active:
+                it.setForeground(1, color)
+            it.setData(0, Qt.UserRole, p.lower() in active)
+            it.setData(4, Qt.UserRole, info.get("url"))
+            t.addTopLevelItem(it)
+            if info.get("url"):
+                lab = QLabel(f"<a href='{html.escape(info['url'], quote=True)}'>{html.escape(info['link'])}</a>")
+                lab.setOpenExternalLinks(True)
+                lab.setToolTip(info["url"])
+                t.setItemWidget(it, 4, lab)
+            elif info.get("link"):
+                it.setText(4, info["link"])
+                it.setForeground(4, QColor("#888"))
+        for c in (0, 2, 3):
+            t.resizeColumnToContents(c)
+        t.header().setSectionResizeMode(1, QHeaderView.Stretch)
+        v.addWidget(t, 1)
+        v.addWidget(QLabel("<small>Links: the Nexus page of the mod you installed it from; otherwise LOOT's link "
+                           "for that plugin; otherwise a Nexus search for its name. Double-click a row to open "
+                           "its link too.</small>"))
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+        self.filter(self.only.isChecked())
+
+    def filter(self, only):
+        for i in range(self.tree.topLevelItemCount()):
+            it = self.tree.topLevelItem(i)
+            it.setHidden(bool(only) and bool(it.data(0, Qt.UserRole)))
+
+
+class UpdatesDialog(QDialog):
+    """Every mod in the profile, in three branches: needs an update, up to date, can't be checked; each
+    with a link (its Nexus files page; otherwise a known home page, LOOT's link or a Nexus search)."""
+
+    def __init__(self, win, r):
+        super().__init__(win)
+        from folm_core import updates
+        folm, ferr, rows, merr = r
+        self.setWindowTitle("Updates")
+        self.resize(1000, 680)
+        v = QVBoxLayout(self)
+        if folm:
+            top = (f"<b>FOLM {html.escape(folm[0])} is out</b> (you have {updates.VERSION}): "
+                   f"<a href='{html.escape(folm[1], quote=True)}'>download it</a>.")
+        elif ferr:
+            top = f"Couldn't check for a newer FOLM ({html.escape(ferr)})."
+        else:
+            top = f"FOLM {updates.VERSION} is up to date."
+        if merr:
+            top += f"<br><span style='color:#d9534f'>Couldn't check the mods ({html.escape(merr)}).</span>"
+        head = QLabel(top + "<br>Click a link to open it in your browser. To update a mod, download the newer "
+                      "file and drop it on FOLM: it offers to replace the old one.")
+        head.setWordWrap(True)
+        head.setOpenExternalLinks(True)
+        v.addWidget(head)
+        t = self.tree = QTreeWidget()
+        t.setHeaderLabels(["Mod", "You have", "Newer / why", "Link"])
+        t.setAlternatingRowColors(True)
+        t.itemDoubleClicked.connect(lambda it, _c: it.data(3, Qt.UserRole)
+                                    and QDesktopServices.openUrl(QUrl(it.data(3, Qt.UserRole))))
+        rows = rows or []
+        groups = [("Needs an update", ("update", "old"), LOSE),
+                  ("Up to date", ("current",), WIN),
+                  ("Can't be checked", ("unknown",), QColor("#888"))]
+        bold = QFont()
+        bold.setBold(True)
+        self.branches = {}
+        for title, states, color in groups:
+            mine = [x for x in rows if x["state"] in states]
+            b = QTreeWidgetItem([f"{title} ({len(mine)})"])
+            b.setFont(0, bold)
+            b.setForeground(0, color)
+            b.setFirstColumnSpanned(True)
+            t.addTopLevelItem(b)
+            self.branches[states[0]] = b
+            for x in sorted(mine, key=lambda x: x["mod"].lower()):
+                if x["state"] == "update":
+                    what = x["new"]
+                elif x["state"] == "old":
+                    what = "your file is an old version on Nexus now; see the page for its replacement"
+                else:
+                    what = x.get("why", "")
+                it = QTreeWidgetItem([x["mod"], x.get("have", ""), what, ""])
+                it.setToolTip(2, what)
+                it.setData(3, Qt.UserRole, x.get("url") or None)
+                b.addChild(it)
+                if x.get("url"):
+                    lab = QLabel(f"<a href='{html.escape(x['url'], quote=True)}'>"
+                                 f"{html.escape(x.get('link') or 'Open')}</a>")
+                    lab.setOpenExternalLinks(True)
+                    lab.setToolTip(x["url"])
+                    t.setItemWidget(it, 3, lab)
+            b.setExpanded(states[0] != "current" or not any(x["state"] in ("update", "old") for x in rows))
+        t.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        t.setColumnWidth(1, 220)
+        t.setColumnWidth(2, 320)
+        v.addWidget(t, 1)
+        v.addWidget(QLabel("<small>Nexus mods are checked by their files page (no sign-in needed). A mod can't be "
+                           "checked when it didn't come from Nexus, or its download was renamed: its link still "
+                           "takes you to where to look. Double-click a row to open its link too.</small>"))
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+
+
+def _swatch(color, size=14):
+    pm = QPixmap(size, size)
+    pm.fill(QColor(color) if color else Qt.transparent)
+    return QIcon(pm)
+
+
+def _readable_on(color):
+    """Black or white, whichever reads better on this color."""
+    c = QColor(color)
+    return QColor("#000000") if (0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()) > 140 else QColor("#ffffff")
+
+
+def build_palette(base_palette, look, game):
+    """A palette from the look: the dark or light base, then the player's own colors on top."""
+    if look["base"] == "dark":
+        p = QPalette()
+        for role, c in ((QPalette.Window, "#2b2b2b"), (QPalette.WindowText, "#e6e6e6"), (QPalette.Base, "#1e1e1e"),
+                        (QPalette.AlternateBase, "#272727"), (QPalette.Text, "#e6e6e6"), (QPalette.Button, "#353535"),
+                        (QPalette.ButtonText, "#e6e6e6"), (QPalette.ToolTipBase, "#353535"),
+                        (QPalette.ToolTipText, "#e6e6e6"), (QPalette.Highlight, "#3d6fb4"),
+                        (QPalette.HighlightedText, "#ffffff"), (QPalette.Link, "#6ab0ff"),
+                        (QPalette.PlaceholderText, "#8a8a8a"), (QPalette.BrightText, "#ff5555")):
+            p.setColor(role, QColor(c))
+        for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+            p.setColor(QPalette.Disabled, role, QColor("#7a7a7a"))
+    elif look["base"] == "light":
+        p = QApplication.style().standardPalette()
+    else:
+        p = QPalette(base_palette)
+    bg = look_mod.resolve(look["background"], game)
+    if bg:
+        c = QColor(bg)
+        dark = c.lightness() < 128
+        p.setColor(QPalette.Window, c)
+        p.setColor(QPalette.Base, c.darker(125) if dark else c.lighter(110))
+        p.setColor(QPalette.AlternateBase, c.lighter(115) if dark else c.darker(105))
+        p.setColor(QPalette.Button, c.lighter(135) if dark else c.darker(108))
+        p.setColor(QPalette.ToolTipBase, c.lighter(135) if dark else c.darker(108))
+    text = look_mod.resolve(look["text"], game)
+    if text:
+        for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText, QPalette.ToolTipText):
+            p.setColor(QPalette.Active, role, QColor(text))
+            p.setColor(QPalette.Inactive, role, QColor(text))
+        dim = QColor(text)
+        dim.setAlpha(110)
+        for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+            p.setColor(QPalette.Disabled, role, dim)
+        p.setColor(QPalette.PlaceholderText, dim)
+    accent = look_mod.resolve(look["accent"], game)
+    if accent:
+        p.setColor(QPalette.Highlight, QColor(accent))
+        p.setColor(QPalette.HighlightedText, _readable_on(accent))
+        p.setColor(QPalette.Link, QColor(accent))
+    return p
+
+
+class PersonalizeDialog(QDialog):
+    """Settings → Personalize…: FOLM's colors and font, shown live; Cancel puts the old look back.
+    Every color can be a fixed one or one of the game's own (Pip-Boy, HUD…), which then follows the
+    game when the player changes it there."""
+
+    COLORS = (("text", "Text"), ("background", "Background"), ("accent", "Highlight (selected rows)"),
+              ("headers", "Category names in the mod list"), ("tab", "The selected tab's name"))
+
+    def __init__(self, main):
+        super().__init__(main)
+        self.main = main
+        self.setWindowTitle("Personalize FOLM")
+        self.old = dict(main.look)
+        self.look = dict(main.look)
+        self.game = main.game_colors()
+        v = QVBoxLayout(self)
+        if self.game:
+            names = ", ".join(f"<span style='color:{c}'>■</span> {html.escape(n)}" for n, c in self.game.items())
+            info = QLabel(f"Your game's colors (from its settings): {names}")
+        else:
+            info = QLabel("<small>Your game's own colors show up here once the game has been started once.</small>")
+        info.setWordWrap(True)
+        v.addWidget(info)
+        presets = QHBoxLayout()
+        presets.addWidget(QLabel("Start from:"))
+        for name in look_mod.PRESETS:
+            b = QPushButton(name if name != "FOLM" else "FOLM's own look")
+            b.clicked.connect(lambda _=False, n=name: self.use(dict(look_mod.PRESETS[n])))
+            presets.addWidget(b)
+        presets.addStretch(1)
+        v.addLayout(presets)
+        form = QFormLayout()
+        self.base = QComboBox()
+        for key, label in (("system", "Like my desktop"), ("dark", "Dark"), ("light", "Light")):
+            self.base.addItem(label, key)
+        self.base.currentIndexChanged.connect(lambda _i: self.set("base", self.base.currentData()))
+        form.addRow("Base", self.base)
+        row = QHBoxLayout()
+        self.font = QFontComboBox()
+        self.font.currentFontChanged.connect(lambda f: self.set("font", f.family()))
+        self.size = QSpinBox()
+        self.size.setRange(0, 24)
+        self.size.setSpecialValueText("Desktop's size")
+        self.size.valueChanged.connect(lambda n: self.set("size", n))
+        self.font_default = QPushButton("Desktop's font")
+        self.font_default.clicked.connect(lambda: self.set("font", "", refill=True))
+        row.addWidget(self.font, 1)
+        row.addWidget(self.size)
+        row.addWidget(self.font_default)
+        form.addRow("Font", row)
+        self.pickers = {}
+        for key, label in self.COLORS:
+            c = QComboBox()
+            c.activated.connect(lambda _i, k=key: self.picked(k))
+            self.pickers[key] = c
+            form.addRow(label, c)
+        v.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        v.addWidget(buttons)
+        self.fill()
+
+    def fill(self):
+        """Show self.look in the controls (without triggering changes)."""
+        for w in [self.base, self.font, self.size] + list(self.pickers.values()):
+            w.blockSignals(True)
+        self.base.setCurrentIndex(max(0, self.base.findData(self.look["base"])))
+        self.font.setCurrentFont(QFont(self.look["font"]) if self.look["font"] else QApplication.font())
+        self.size.setValue(int(self.look["size"] or 0))
+        for key, c in self.pickers.items():
+            c.clear()
+            c.addItem("Default", "")
+            for name, color in self.game.items():
+                c.addItem(_swatch(color), f"Game: {name}", f"game:{name}")
+            value = self.look[key]
+            if value and not value.startswith("game:"):
+                c.addItem(_swatch(value), value, value)
+            elif value.startswith("game:") and c.findData(value) < 0:
+                c.addItem(f"Game: {value[5:]} (not set in the game)", value)
+            c.addItem("Choose a color…", "pick")
+            c.setCurrentIndex(max(0, c.findData(value)))
+        for w in [self.base, self.font, self.size] + list(self.pickers.values()):
+            w.blockSignals(False)
+
+    def picked(self, key):
+        c = self.pickers[key]
+        value = c.currentData()
+        if value == "pick":
+            now = look_mod.resolve(self.look[key], self.game) or "#ffffff"
+            chosen = QColorDialog.getColor(QColor(now), self, "Choose a color")
+            if not chosen.isValid():
+                self.fill()
+                return
+            value = chosen.name()
+        self.set(key, value, refill=True)
+
+    def set(self, key, value, refill=False):
+        self.look[key] = value
+        self.main.apply_look(self.look)
+        if refill:
+            self.fill()
+
+    def use(self, look):
+        self.look = look
+        self.main.apply_look(self.look)
+        self.fill()
+
+    def reject(self):
+        self.main.apply_look(self.old)
+        super().reject()
+
+    def accept(self):
+        self.main.look = self.look
+        look_mod.save(self.main.m_home(), self.look)
+        super().accept()
 
 
 class Main(QMainWindow):
@@ -243,8 +776,17 @@ class Main(QMainWindow):
         self.watcher = QFileSystemWatcher(self)       # refresh when the CLI (or anything) changes the setup
         self.watcher.fileChanged.connect(self.on_profile_file_changed)
         self.watcher.directoryChanged.connect(self.on_profile_file_changed)
+        self.look = look_mod.load(self.m_home())
+        self.base_palette, self.base_font = QApplication.palette(), QApplication.font()
+        self.header_color, self.tab_color, self._look_now = QColor("#c9a227"), None, None
+        self.undo_stack, self.redo_stack = [], []     # Ctrl+Z / Ctrl+Y: (what, Manager.snapshot())
+        self.saves_cache = {}
         self._build()
+        self.apply_look()
         self.refresh()
+        self._start_download_watch()
+        if self.m:
+            self.m.steam_fixes()                     # quiet: only while Steam is closed
 
     # ---------------------------------------------------------------- layout
     def _build(self):
@@ -252,6 +794,12 @@ class Main(QMainWindow):
         self.toolbar = tb
         tb.setMovable(False)
         self.addToolBar(tb)
+        logo = QLabel()
+        logo.setPixmap(QPixmap(os.path.join(HERE, "assets", "folm-icon-64.png")).scaledToHeight(
+            26, Qt.SmoothTransformation))
+        logo.setToolTip(f"{APP_NAME} {version.VERSION}")
+        logo.setContentsMargins(4, 0, 4, 0)
+        tb.addWidget(logo)
         tb.addWidget(QLabel(" Edition "))
         self.edition = QComboBox()
         for e in EDITIONS:
@@ -264,8 +812,18 @@ class Main(QMainWindow):
         self.profile.setMinimumWidth(170)
         self.profile.activated.connect(self.on_profile)
         tb.addWidget(self.profile)
-        b = QPushButton("New profile…")
-        b.clicked.connect(self.new_profile)
+        b = QToolButton()
+        b.setText("Profiles")
+        b.setToolTip("New, rename or delete a profile")
+        b.setPopupMode(QToolButton.InstantPopup)
+        pm = QMenu(self)
+        pm.addAction("New profile…").triggered.connect(self.new_profile)
+        self.rename_action = pm.addAction("Rename this profile…")
+        self.rename_action.triggered.connect(self.rename_profile)
+        pm.addAction("Delete a profile…").triggered.connect(self.delete_profile)
+        pm.aboutToShow.connect(lambda: (self.rename_action.setText(f"Rename “{self.m.active}”…"),
+                                        self.rename_action.setEnabled(self.m.active != "Default")))
+        b.setMenu(pm)
         tb.addWidget(b)
         tb.addSeparator()
         self.btn_deploy = QPushButton("Deploy")
@@ -277,10 +835,15 @@ class Main(QMainWindow):
         self.btn_play = QPushButton("▶  Play")
         self.btn_play.setStyleSheet("font-weight: bold; padding: 4px 16px;")
         self.btn_play.clicked.connect(self.play)
+        self.btn_play.setToolTip("Deploy if needed, run the checks, and start the game (F9)")
         self.btn_health = QPushButton("🩺 Health check")
         self.btn_health.setToolTip("Check that your mods are really working: files, plugins, and what loaded last launch")
         self.btn_health.clicked.connect(self.health_check)
-        for w in (self.btn_deploy, self.btn_undeploy, self.btn_play, self.btn_health):
+        self.btn_optimize = QPushButton("⚡ Optimize")
+        self.btn_optimize.setToolTip("Fixes for problems nearly everyone has playing on Linux: crackling sound, "
+                                     "alt-tab, physics, CPU speed")
+        self.btn_optimize.clicked.connect(self.optimize)
+        for w in (self.btn_deploy, self.btn_undeploy, self.btn_play, self.btn_health, self.btn_optimize):
             tb.addWidget(w)
         tb.addSeparator()
         b = QPushButton("⟳ Refresh")
@@ -288,45 +851,33 @@ class Main(QMainWindow):
         b.clicked.connect(self.reload)
         tb.addWidget(b)
         QShortcut(QKeySequence("F5"), self, activated=self.reload)
-        self.settings_btn = QToolButton()
-        self.settings_btn.setText("⚙ Settings")
-        self.settings_btn.setPopupMode(QToolButton.InstantPopup)
-        self.settings_menu = QMenu(self)
-        self.setting_actions = {}
-        self.fps_actions = {}
-        for key, (default, label) in Manager.SETTINGS.items():
-            if key == "fps_cap":
-                sub = self.fps_menu = self.settings_menu.addMenu("FPS cap (keeps physics stable with V-Sync off)")
-                group = self.fps_group = QActionGroup(self)
-                for val in (0, 60, 90, 120, 144):
-                    a = sub.addAction("Off" if not val else f"{val} FPS" + ("  (recommended)" if val == 120 else ""))
-                    a.setCheckable(True)
-                    group.addAction(a)
-                    a.triggered.connect(lambda _c=False, v=val: self.change_setting("fps_cap", v))
-                    self.fps_actions[val] = a
-                continue
-            act = self.settings_menu.addAction(label)
-            act.setCheckable(True)
-            act.toggled.connect(lambda on, k=key: self.change_setting(k, on))
-            self.setting_actions[key] = act
-        self.settings_menu.addSeparator()
-        self.menu_action = self.settings_menu.addAction("Add FOLM to the app menu")
-        self.menu_action.triggered.connect(self.add_to_app_menu)
-        self.settings_menu.aboutToShow.connect(self.refresh_desktop_actions)
-        self.settings_btn.setMenu(self.settings_menu)
-        tb.addWidget(self.settings_btn)
+        QShortcut(QKeySequence("F9"), self, activated=self.play)
+        QShortcut(QKeySequence.Undo, self, activated=self.undo_change)
+        for keys in (QKeySequence.Redo, QKeySequence("Ctrl+Y")):
+            QShortcut(keys, self, activated=self.redo_change)
+        QShortcut(QKeySequence.Find, self, activated=lambda: (self.mod_filter.setFocus(),
+                                                               self.mod_filter.selectAll()))
 
         split = QSplitter()
         left = QWidget()
         lv = QVBoxLayout(left)
         lv.setContentsMargins(4, 4, 4, 4)
         lv.addWidget(QLabel("<b>Mods</b> — drag to reorder; lower mods win file conflicts"))
+        self.mod_filter = QLineEdit()
+        self.mod_filter.setPlaceholderText("Search mods (Ctrl+F): name, type, tag or note")
+        self.mod_filter.setClearButtonEnabled(True)
+        self.mod_filter.textChanged.connect(self.apply_mod_filter)
+        lv.addWidget(self.mod_filter)
         self.mods = ModList()
         self.mods.itemChanged.connect(self.on_mod_checked)
         self.mods.order_changed.connect(self.on_reorder)
         self.mods.currentItemChanged.connect(self.on_select)
         self.mods.setContextMenuPolicy(Qt.CustomContextMenu)
         self.mods.customContextMenuRequested.connect(self.mod_menu)
+        QShortcut(QKeySequence.Delete, self.mods, activated=self.remove_selected_mod,
+                  context=Qt.WidgetWithChildrenShortcut)
+        QShortcut(QKeySequence("Escape"), self.mod_filter, activated=self.mod_filter.clear,
+                  context=Qt.WidgetShortcut)
         lv.addWidget(self.mods)
         row = QHBoxLayout()
         for label, fn in (("Sort mods", self.sort_mods), ("Install mod…", self.pick_install),
@@ -361,17 +912,86 @@ class Main(QMainWindow):
         self.tabs.addTab(ow, "Overwrite")
         self.tabs.addTab(self._library_tab(), "Library")
         self.tabs.addTab(self._notes_tab(), "Notes")
+        self.tabs.addTab(self._saves_tab(), "Saves")
         self.tabs.addTab(self._tools_tab(), "Tools")
+        self.tabs.addTab(self._settings_tab(), "Settings")
+        self.tabs.addTab(HelpPane("faq", "<b>Questions and answers</b> — open a category, then pick a question."),
+                         "FAQ")
+        self.tabs.addTab(HelpPane("resources", "<b>Modder resources</b> — guides, documentation and tools. "
+                                  "Links open in your browser."), "Resources")
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setFont(QFont("monospace"))
         self.tabs.addTab(self.log, "Log")
+        self.tabs.currentChanged.connect(lambda _i: self.color_tabs())
+        self.tabs.currentChanged.connect(lambda _i: self.tabs.currentWidget() is self.saves_tab
+                                         and self.refresh_saves())
         split.addWidget(self.tabs)
         split.setSizes([560, 720])
         self.setCentralWidget(split)
         self.status = QLabel()
         self.statusBar().addWidget(self.status, 1)
+        self.dl_notice = QWidget()
+        dh = QHBoxLayout(self.dl_notice)
+        dh.setContentsMargins(0, 0, 0, 0)
+        self.dl_label = QLabel()
+        dh.addWidget(self.dl_label)
+        self.dl_install = QPushButton("Install")
+        self.dl_install.clicked.connect(self.install_new_download)
+        dh.addWidget(self.dl_install)
+        b = QPushButton("Not now")
+        b.clicked.connect(self.dismiss_new_download)
+        dh.addWidget(b)
+        self.dl_notice.hide()
+        self.dl_queue = []
+        self.statusBar().addPermanentWidget(self.dl_notice)
         self.statusBar().addPermanentWidget(QLabel("Drop a mod file anywhere on this window to install it "))
+
+    # ---------------------------------------------------------------- look (Settings → Personalize…)
+    def m_home(self):
+        from folm_core.manager import home
+        return home()
+
+    def game_colors(self):
+        """The game's interface colors ({name: "#rrggbb"}), for the edition shown. {} before the game
+        has made its settings file."""
+        try:
+            return look_mod.game_colors(os.path.join(self.m.ini_dir(), "FalloutPrefs.ini"))
+        except (KeyError, OSError, TypeError):
+            return {}
+
+    def apply_look(self, look=None):
+        """Put a look on the window: palette, font, category names, selected tab. Cheap when nothing
+        changed, so every refresh calls it (the game's colors may have changed, or the edition)."""
+        look = look or self.look
+        game = self.game_colors() if any(str(v).startswith("game:") for v in look.values()) else {}
+        now = (tuple(sorted(look.items())), tuple(sorted(game.items())))
+        if now == self._look_now:
+            return
+        self._look_now = now
+        app = QApplication.instance()
+        app.setPalette(build_palette(self.base_palette, look, game))
+        f = QFont(self.base_font)
+        if look["font"]:
+            f.setFamily(look["font"])
+        if look["size"]:
+            f.setPointSize(int(look["size"]))
+        app.setFont(f)
+        self.log.setFont(QFont("monospace", f.pointSize()))
+        self.header_color = QColor(look_mod.resolve(look["headers"], game) or "#c9a227")
+        tab = look_mod.resolve(look["tab"], game)
+        self.tab_color = QColor(tab) if tab else None
+        for i in range(self.mods.topLevelItemCount()):
+            it = self.mods.topLevelItem(i)
+            if it.data(0, Qt.UserRole) == HEADER:
+                it.setForeground(0, self.header_color)
+        self.color_tabs()
+
+    def color_tabs(self):
+        bar = self.tabs.tabBar()
+        normal = QApplication.palette().color(QPalette.WindowText)
+        for i in range(bar.count()):
+            bar.setTabTextColor(i, self.tab_color if self.tab_color and i == bar.currentIndex() else normal)
 
     def _library_tab(self):
         w = QWidget()
@@ -402,8 +1022,81 @@ class Main(QMainWindow):
                            "To add one, download it and drop the file on this window."))
         self.tools_box = QVBoxLayout()
         v.addLayout(self.tools_box)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("<b>Updates</b> — is there a newer FOLM, or newer files for your Nexus mods?<br>"
+                             "<small>Asks GitHub and Nexus only when you press the button (mod ids only, "
+                             "no account).</small>"), 1)
+        b = QPushButton("Check for updates")
+        b.clicked.connect(self.check_updates)
+        row.addWidget(b)
+        v.addLayout(row)
+        names = QLabel("<small>FOLM can only check a mod if its download kept the name Nexus gave it, like "
+                       "<code>Example Mod-12345-1-0-1700000000.7z</code>: that name says which file you have. Mods that "
+                       "were renamed or didn't come from Nexus go under <i>Can't be checked</i>, with a link to "
+                       "where to look.</small>")
+        names.setWordWrap(True)
+        v.addWidget(names)
         self.tools_tab = w
         v.addStretch(1)
+        return w
+
+    def _settings_tab(self):
+        """Settings as a tab (it was a drop-down menu on the toolbar). The checkboxes are kept in
+        self.setting_actions under the same keys, so refresh() and Optimize update them as before."""
+        w = QWidget()
+        v = QVBoxLayout(w)
+        game = QGroupBox("Game settings (this profile) — FOLM puts them into the game on Deploy")
+        gv = QVBoxLayout(game)
+        self.setting_actions = {}
+        for key, (default, label) in Manager.SETTINGS.items():
+            if key == "fps_cap":
+                row = QHBoxLayout()
+                row.addWidget(QLabel("FPS cap (keeps physics stable with V-Sync off):"))
+                self.fps_combo = QComboBox()
+                for val in (0, 60, 90, 120, 144):
+                    self.fps_combo.addItem("Off" if not val else f"{val} FPS" + ("  (recommended)" if val == 120
+                                                                                 else ""), val)
+                self.fps_combo.setToolTip("120 is safe. Not your screen's refresh rate: with V-Sync off a cap "
+                                          "at 60 on a 60 Hz screen stutters. See FAQ → Optimize.")
+                self.fps_combo.activated.connect(
+                    lambda i: self.change_setting("fps_cap", self.fps_combo.itemData(i)))
+                row.addWidget(self.fps_combo)
+                row.addStretch(1)
+                gv.addLayout(row)
+                continue
+            box = QCheckBox(label)
+            box.toggled.connect(lambda on, k=key: self.change_setting(k, on))
+            gv.addWidget(box)
+            self.setting_actions[key] = box
+        v.addWidget(game)
+        lists = QGroupBox("Mod lists")
+        lh = QHBoxLayout(lists)
+        for text, fn in (("Install a mod list…", self.open_mod_list),
+                         ("Save this profile as a mod list…", self.save_mod_list)):
+            b = QPushButton(text)
+            b.clicked.connect(fn)
+            lh.addWidget(b)
+        lh.addStretch(1)
+        v.addWidget(lists)
+        app = QGroupBox("FOLM")
+        ah = QHBoxLayout(app)
+        b = QPushButton("Personalize… (colors and font)")
+        b.clicked.connect(lambda: PersonalizeDialog(self).exec())
+        ah.addWidget(b)
+        self.menu_action = QPushButton("Add FOLM to the app menu")
+        self.menu_action.clicked.connect(self.add_to_app_menu)
+        ah.addWidget(self.menu_action)
+        ah.addStretch(1)
+        v.addWidget(app)
+        self.watch_box = QCheckBox("Offer to install new mod files when they appear in Downloads "
+                                   "(or a library folder)")
+        self.watch_box.setToolTip("FOLM only asks, at the bottom of the window; nothing is installed until "
+                                  "you press Install.")
+        self.watch_box.setChecked(bool(appprefs.get(self.m_home(), "watch_downloads")))
+        self.watch_box.toggled.connect(self.set_watch_downloads)
+        v.addWidget(self.watch_box)
+        v.addStretch(1)
+        self.refresh_desktop_actions()
         return w
 
     def refresh_tools(self):
@@ -420,9 +1113,13 @@ class Main(QMainWindow):
             h = QHBoxLayout(row)
             h.setContentsMargins(4, 6, 4, 6)
             have = bool(t["exe"])
-            text = QLabel(f"<b>{t['name']}</b> — {'✅ installed' if have else 'not installed'}<br>"
-                          f"<small>{t['what']}" + ("" if have else f" {t['how']}") + "</small>")
+            ver = f" · version {html.escape(t['version'])}" if have and t.get("version") else ""
+            text = QLabel(f"<b>{t['name']}</b> — {'✅ installed' + ver if have else 'not installed'}<br>"
+                          f"<small>{t['what']}" + ("" if have else f" {t['how']}")
+                          + (f" <a href='{t['get']}'>Newest version</a>" if have and t["get"].startswith("http") else "")
+                          + "</small>")
             text.setWordWrap(True)
+            text.setOpenExternalLinks(True)
             text.setEnabled(have)                        # greyed out when it isn't installed
             if have:
                 text.setToolTip(t["exe"])
@@ -435,6 +1132,10 @@ class Main(QMainWindow):
                 b.clicked.connect(lambda _=False, u=t["get"]: QDesktopServices.openUrl(QUrl(u)))
             h.addWidget(b)
             self.tools_box.addWidget(row)
+
+    def check_updates(self):
+        from folm_core import updates
+        self.run(updates.check_all, self.m, then=lambda r: UpdatesDialog(self, r).exec())
 
     def open_tool(self, tool_id):
         self.run(self.m.run_tool, tool_id,
@@ -470,6 +1171,8 @@ class Main(QMainWindow):
         except FileNotFoundError:
             changed = False
         if changed:
+            self.undo_stack.clear()                    # changed outside this window: old steps don't fit
+            self.redo_stack.clear()
             self.reload()
         self.watch()                                   # some editors replace files; re-arm the watch
 
@@ -480,6 +1183,11 @@ class Main(QMainWindow):
         self.refresh()
 
     def refresh(self):
+        self.apply_look()
+        with self.m.reusing_conflicts():               # one scan of the mods' files per refresh
+            self._refresh()
+
+    def _refresh(self):
         self.loading = True
         m = self.m
         self.watch()
@@ -508,16 +1216,22 @@ class Main(QMainWindow):
             act.blockSignals(True)
             act.setChecked(bool(m.setting(key)))
             act.blockSignals(False)
+        lms = self.setting_actions.get("low_memory_save")
+        if lms:
+            from folm_core import lowmemsave
+            try:
+                why = lowmemsave.why_not(m.edition, m.data["game_dir"], m.data_dir)
+            except (KeyError, OSError):
+                why = None
+            label = Manager.SETTINGS["low_memory_save"][1]
+            lms.setText(f"{label}  — off: {why}" if why else label)
+            lms.setToolTip("At the first memory warning, the game saves itself as a new save (FOLM_LowMemory_…). "
+                           + (f"Not available here: {why}. See FAQ → Essentials." if why else
+                              "Start the game with ▶ Play in FOLM for this to work."))
         cap = int(m.setting("fps_cap") or 0)
-        if cap not in self.fps_actions:                 # a custom value set from the CLI
-            a = self.fps_actions[cap] = self.fps_menu.addAction(f"{cap} FPS")
-            a.setCheckable(True)
-            self.fps_group.addAction(a)
-            a.triggered.connect(lambda _c=False, v=cap: self.change_setting("fps_cap", v))
-        for v, a in self.fps_actions.items():
-            a.blockSignals(True)
-            a.setChecked(v == cap)
-            a.blockSignals(False)
+        if self.fps_combo.findData(cap) < 0:            # a custom value set from the CLI
+            self.fps_combo.addItem(f"{cap} FPS", cap)
+        self.fps_combo.setCurrentIndex(self.fps_combo.findData(cap))
         for p in m.profiles():
             self.profile.addItem(p)
         self.profile.setCurrentText(m.active)
@@ -533,7 +1247,7 @@ class Main(QMainWindow):
                 h.setData(0, Qt.UserRole, HEADER)
                 h.setFlags(Qt.ItemIsEnabled)
                 h.setFont(0, bold)
-                h.setForeground(0, QColor("#c9a227"))
+                h.setForeground(0, self.header_color)
                 self.mods.addTopLevelItem(h)
                 h.setFirstColumnSpanned(True)
             it = QTreeWidgetItem([mod["name"], mod.get("type", ""), ", ".join(mod.get("tags", [])), ""])
@@ -555,13 +1269,22 @@ class Main(QMainWindow):
         for i in range(4):
             if i:
                 self.mods.resizeColumnToContents(i)
+        self.apply_mod_filter()
+        if self.tabs.currentWidget() is self.saves_tab:
+            QTimer.singleShot(0, self.refresh_saves)       # the profile or its plugins may have changed
 
         if os.path.isdir(m.data_dir):
             rows, problems = m.plugin_order()
+            at_end = {p.lower() for p in m.cur.get("plugin_last", [])}
             for name, on, idx, masters in rows:
-                it = QTreeWidgetItem([f"{idx:02X}" if on else "--", name, ", ".join(masters)])
+                it = QTreeWidgetItem([f"{idx:02X}" if on else "--", name + ("  ⤓" if name.lower() in at_end else ""),
+                                      ", ".join(masters)])
                 it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
                 it.setCheckState(1, Qt.Checked if on else Qt.Unchecked)
+                it.setData(1, Qt.UserRole, name)
+                it.setToolTip(1, ("⤓ kept at the end of the load order, after plugins you add later too.\n"
+                                  if name.lower() in at_end else "")
+                              + "Right-click to load it earlier, later or at the end.")
                 self.plugins.addTopLevelItem(it)
             for p in problems:
                 it = QTreeWidgetItem(["⚠", p, ""])
@@ -713,6 +1436,7 @@ class Main(QMainWindow):
         self.m = Manager(self.edition.itemData(i))
         self.setup_asked.discard(self.m.edition)       # choosing an edition is a request to set it up
         self.refresh()
+        self.rewatch_downloads()
 
     def on_profile(self, _i):
         name = self.profile.currentText()
@@ -732,6 +1456,51 @@ class Main(QMainWindow):
             return
         self.run(self.m.switch_profile, name.strip())
 
+    def rename_profile(self):
+        old = self.m.active
+        name, ok = QInputDialog.getText(self, "Rename profile", f"New name for “{old}”:", text=old)
+        if not ok or not name.strip() or name.strip() == old:
+            return
+        self.run(self.m.rename_profile, old, name.strip(),
+                 then=lambda _r: self.say(f"Renamed the profile “{old}” to “{name.strip()}”."))
+
+    def delete_profile(self):
+        names = self.m.profiles()
+        if len(names) < 2:
+            QMessageBox.information(self, "Delete a profile", "This is your only profile, so there's nothing to "
+                                    "switch to. Make another profile first.")
+            return
+        name, ok = QInputDialog.getItem(self, "Delete a profile", "Which profile?", names,
+                                        names.index(self.m.active), False)
+        if not ok:
+            return
+        other = "Default" if name != "Default" and "Default" in names else next(n for n in names if n != name)
+        switch = f"\n\nIt's the profile you're using, so FOLM switches to “{other}” first." if name == self.m.active else ""
+        if QMessageBox.question(
+                self, "Delete a profile",
+                f"Delete the profile “{name}”?\n\nIts mods stay installed (other profiles can use them), its saves "
+                f"stay where they are, and files it caught become the mod “Caught files from {name}”. Only its "
+                f"list of mods and their order is deleted, and that can't be undone.{switch}",
+                QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel) != QMessageBox.Yes:
+            return
+
+        def deleted(r):
+            saves, kept = r
+            msg = f"Deleted the profile “{name}”."
+            if saves:
+                msg += f" Its saves are still in {saves}."
+            if kept:
+                msg += f" Its caught files are the mod “{kept}” (Add staged mod… to use it)."
+            self.say(msg)
+            QMessageBox.information(self, "Delete a profile", msg)
+
+        def after_switch(_r=None):
+            self.run(self.m.delete_profile, name, then=deleted)
+        if name == self.m.active:
+            self.run(self.m.switch_profile, other, then=after_switch)
+        else:
+            after_switch()
+
     def on_mod_checked(self, it, col):
         if self.loading or col != 0 or is_header(it) or it.text(0) == self.m.overwrite_name:
             return
@@ -750,12 +1519,14 @@ class Main(QMainWindow):
                     it.setCheckState(0, Qt.Checked)
                     self.loading = False
                     return
+        self.remember(f"{'turning on' if on else 'turning off'} {name}")
         self.m.set_enabled(name, on)
-        self.refresh()
+        QTimer.singleShot(0, self.refresh)      # not inside the click/keypress: it rebuilds this very item
 
     def on_reorder(self):
         items = [self.mods.topLevelItem(i) for i in range(self.mods.topLevelItemCount())]
         names = [it.text(0) for it in items if not is_header(it) and it.text(0) != self.m.overwrite_name]
+        self.remember("moving a mod")
         try:
             self.m.reorder(names)
         except FolmError as e:
@@ -765,10 +1536,12 @@ class Main(QMainWindow):
     def on_plugin_checked(self, it, col):
         if self.loading or col != 1 or it.data(0, Qt.UserRole) or not (it.flags() & Qt.ItemIsUserCheckable):
             return
-        self.m.set_plugin_active(it.text(1), it.checkState(1) == Qt.Checked)
-        self.say(f"{'Activated' if it.checkState(1) == Qt.Checked else 'Deactivated'} {it.text(1)} "
+        name = it.data(1, Qt.UserRole) or it.text(1)
+        self.remember(f"turning {'on' if it.checkState(1) == Qt.Checked else 'off'} {name}")
+        self.m.set_plugin_active(name, it.checkState(1) == Qt.Checked)
+        self.say(f"{'Activated' if it.checkState(1) == Qt.Checked else 'Deactivated'} {name} "
                  "(Deploy to apply).")
-        self.refresh()
+        QTimer.singleShot(0, self.refresh)      # not inside the click/keypress: it rebuilds this very item
 
     def on_select(self, it, _prev):
         if not it or is_header(it) or it.text(0) == self.m.overwrite_name:
@@ -785,6 +1558,7 @@ class Main(QMainWindow):
         it = self.mods.currentItem()
         if not it or is_header(it) or it.text(0) == self.m.overwrite_name:
             return
+        self.remember(f"the notes of {it.text(0)}")
         self.m.set_note(it.text(0), self.notes.toPlainText())
         self.m.set_tags(it.text(0), self.tags.text().split(","))
         self.say(f"Saved notes for {it.text(0)}.")
@@ -812,11 +1586,222 @@ class Main(QMainWindow):
                 act.setCheckable(True)
                 act.setChecked(current == c)
             menu.addAction("Open folder", lambda: self.open_folder(os.path.join(self.m.mods_dir, name)))
+            page = self.nexus_page(self.m.mod(name))
+            if page:
+                menu.addAction("Open its Nexus page", lambda: QDesktopServices.openUrl(QUrl(page)))
+            src = self.m.mod(name).get("source") or ""
+            if src and os.path.exists(src):
+                menu.addAction("Show the downloaded file", lambda: self.open_folder(os.path.dirname(src)))
             menu.addSeparator()
-            menu.addAction("Remove from this profile", lambda: self.remove_mod(name))
+            menu.addAction("Remove from this profile\tDel", lambda: self.remove_mod(name))
         menu.exec(self.mods.viewport().mapToGlobal(pos))
 
+    # ---------------------------------------------------------------- search, undo, links
+    def apply_mod_filter(self, _text=None):
+        """Show only mods matching every word typed (in name, type, tags or notes). A category heading
+        stays while any of its mods show. Dragging is off while searching: with mods hidden, a drop
+        could land somewhere other than where it looks."""
+        words = self.mod_filter.text().lower().split()
+        header, any_shown = None, False
+        for i in range(self.mods.topLevelItemCount()):
+            it = self.mods.topLevelItem(i)
+            if is_header(it):
+                if header is not None:
+                    header.setHidden(not any_shown)
+                header, any_shown = it, False
+                continue
+            mod = self.m.mod(it.text(0)) if self.m.ready and it.text(0) != self.m.overwrite_name else None
+            hay = " ".join([it.text(0), it.text(1), it.text(2), (mod or {}).get("notes", "")]).lower()
+            show = all(w in hay for w in words)
+            it.setHidden(not show)
+            any_shown = any_shown or show
+        if header is not None:
+            header.setHidden(not any_shown)
+        self.mods.setDragDropMode(QAbstractItemView.NoDragDrop if words else QAbstractItemView.InternalMove)
+
+    def remember(self, what):
+        """Call before changing the mod list: Ctrl+Z puts this state back."""
+        if not self.m.ready:
+            return
+        self.undo_stack.append((what, self.m.snapshot()))
+        del self.undo_stack[:-50]
+        self.redo_stack.clear()
+
+    def undo_change(self):
+        self._step(self.undo_stack, self.redo_stack, "Undid")
+
+    def redo_change(self):
+        self._step(self.redo_stack, self.undo_stack, "Redid")
+
+    def _step(self, source, target, verb):
+        if self.jobs:
+            return
+        while source:
+            what, snap = source.pop()
+            if snap.get("profile") != self.m.active:
+                continue                                # made in another profile: skip it
+            try:
+                before = self.m.restore(snap)
+            except FolmError as e:
+                self.say(str(e))
+                return
+            target.append((what, before))
+            self.refresh()
+            self.tell(f"{verb} {what}." + (" Deploy to put it in the game." if self.m.deployed else ""))
+            return
+        self.tell("Nothing to undo." if verb == "Undid" else "Nothing to redo.")
+
+    def tell(self, text):
+        """A short note at the bottom of the window for a few seconds (and in the Log tab)."""
+        self.say(text)
+        self.statusBar().showMessage(text, 6000)
+
+    def remove_selected_mod(self):
+        it = self.mods.currentItem()
+        if it and not is_header(it) and it.text(0) != self.m.overwrite_name:
+            self.remove_mod(it.text(0))
+
+    def nexus_page(self, mod):
+        from folm_core import requires
+        i = requires.nexus_id(mod)
+        if not i:
+            return None
+        domain = (mod.get("nexus") or {}).get("domain") or requires.GAME_DOMAIN.get(self.m.edition, "newvegas")
+        return f"https://www.nexusmods.com/{domain}/mods/{i}"
+
+    # ---------------------------------------------------------------- saves
+    def _saves_tab(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        self.saves_label = QLabel()
+        self.saves_label.setWordWrap(True)
+        v.addWidget(self.saves_label)
+        self.saves_list = QTreeWidget()
+        self.saves_list.setHeaderLabels(["Save", "Made", "Plugins"])
+        self.saves_list.setRootIsDecorated(False)
+        self.saves_list.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.saves_list.itemDoubleClicked.connect(self.show_save)
+        v.addWidget(self.saves_list)
+        row = QHBoxLayout()
+        b = QPushButton("Open the saves folder")
+        b.clicked.connect(lambda: self.open_folder(self.m.save_dir()))
+        row.addWidget(b)
+        row.addStretch(1)
+        v.addLayout(row)
+        self.saves_tab = w
+        return w
+
+    def refresh_saves(self):
+        import time
+        self.saves_list.clear()
+        if not self.m.ready:
+            self.saves_label.setText("Set up the game first.")
+            return
+        try:
+            rows = self.m.saves_overview(cache=self.saves_cache)
+        except (OSError, KeyError) as e:
+            self.saves_label.setText(f"Couldn't read the saves: {e}")
+            return
+        bad = 0
+        for r in rows:
+            if r["plugins"] is None:
+                status, color = "couldn't read it", QColor("#888")
+            elif r["missing"]:
+                bad += 1
+                fits = (" — fits profile " + ", ".join(f"“{n}”" for n in r["fits"])) if r["fits"] else ""
+                status, color = (f"✖ missing {len(r['missing'])}{fits}: {', '.join(r['missing'])}",
+                                 QColor("#d9534f"))
+            else:
+                status, color = f"✔ all {len(r['plugins'])} plugins are on", WIN
+            it = QTreeWidgetItem([os.path.splitext(r["name"])[0],
+                                  time.strftime("%Y-%m-%d %H:%M", time.localtime(r["time"])), status])
+            it.setForeground(2, color)
+            it.setData(0, Qt.UserRole, r)
+            self.saves_list.addTopLevelItem(it)
+        self.saves_list.resizeColumnToContents(1)
+        self.saves_label.setText(
+            f"<b>Your saves, checked against profile “{html.escape(self.m.active)}”</b> — {len(rows)} save(s); "
+            "every profile shares the game's Saves folder. <span style='color:#3fa34d'>Green</span>: all its "
+            "plugins are on in this profile. <span style='color:#d9534f'>Red</span>: it's missing some, and "
+            "loading it can break quests and scripts; pick the profile it fits, or turn those plugins on. "
+            + (f"<b>{bad}</b> don't fit this profile. " if bad else "")
+            + "Switching profiles or turning mods on and off updates this list. "
+            "Double-click a save to see its plugins.")
+
+    def show_save(self, it, _col=None):
+        r = it.data(0, Qt.UserRole)
+        if r and r["plugins"] is not None:
+            SaveDialog(self, r).exec()
+
+    # ---------------------------------------------------------------- new downloads
+    def _start_download_watch(self):
+        self.dl_watcher = QFileSystemWatcher(self)
+        self.dl_watcher.directoryChanged.connect(lambda _p: self.dl_timer.start())
+        self.dl_timer = QTimer(self)
+        self.dl_timer.setSingleShot(True)
+        self.dl_timer.setInterval(3000)              # let the browser finish renaming the file
+        self.dl_timer.timeout.connect(self.check_new_downloads)
+        self.dl_seen = set()
+        self.dl_folders = []
+        self.rewatch_downloads()
+
+    def rewatch_downloads(self):
+        if self.dl_watcher.directories():
+            self.dl_watcher.removePaths(self.dl_watcher.directories())
+        if not appprefs.get(self.m_home(), "watch_downloads"):
+            self.dl_folders = []
+            return
+        lib = self.m.library_folders() if self.m.ready else []
+        self.dl_folders = appprefs.download_folders(lib)
+        appprefs.new_mod_files(self.dl_folders, self.dl_seen)  # what's there now isn't new
+        if self.dl_folders:
+            self.dl_watcher.addPaths(self.dl_folders)
+
+    def set_watch_downloads(self, on):
+        appprefs.set(self.m_home(), "watch_downloads", bool(on))
+        self.rewatch_downloads()
+        if not on:
+            self.dl_queue.clear()
+            self.dl_notice.hide()
+        self.say("FOLM will offer to install new mod files." if on else "FOLM won't watch for new downloads.")
+
+    def check_new_downloads(self):
+        import time
+        for p in appprefs.new_mod_files(self.dl_folders, self.dl_seen):
+            try:
+                if time.time() - os.path.getmtime(p) < 2:   # still being written: look again shortly
+                    self.dl_seen.discard(p)
+                    self.dl_timer.start()
+                    continue
+                if self.m.ready and any(k == "same" and prof == self.m.active
+                                        for k, prof, _ in self.m.find_duplicates(p)):
+                    continue                                  # already installed here
+            except OSError:
+                continue
+            self.dl_queue.append(p)
+        self.show_new_download()
+
+    def show_new_download(self):
+        if not self.dl_queue:
+            self.dl_notice.hide()
+            return
+        name = os.path.basename(self.dl_queue[0])
+        more = f" (+{len(self.dl_queue) - 1} more)" if len(self.dl_queue) > 1 else ""
+        self.dl_label.setText(f"New download: <b>{html.escape(name)}</b>{more}")
+        self.dl_notice.show()
+
+    def install_new_download(self):
+        if self.dl_queue:
+            self.install(self.dl_queue.pop(0))
+        self.show_new_download()
+
+    def dismiss_new_download(self):
+        if self.dl_queue:
+            self.dl_queue.pop(0)
+        self.show_new_download()
+
     def set_category(self, name, cat):
+        self.remember(f"the category of {name}")
         self.m.set_category(name, cat)
         self.say(f"{name}: category {cat or 'auto'}. Use Sort mods to rearrange.")
         self.refresh()
@@ -832,6 +1817,7 @@ class Main(QMainWindow):
                                 f"Arrange your mods by category? {moved} mod(s) will move.\n\n"
                                 "Sorting never changes which mod wins a file conflict.") != QMessageBox.Yes:
             return
+        self.remember("sorting the mods")
         self.m.sort_mods()
         self.say(f"Sorted mods: {moved} moved." + (" Deploy to apply." if self.m.deployed else ""))
         self.refresh()
@@ -846,12 +1832,75 @@ class Main(QMainWindow):
         if QMessageBox.question(self, APP_NAME, f"Remove '{name}' from profile '{self.m.active}'?\n\n"
                                 "Its files stay in the shared library; you can add it back later.") \
                 == QMessageBox.Yes:
+            self.remember(f"removing {name}")
             self.m.remove(name)
             self.refresh()
+            self.tell(f"Removed {name} from this profile (Ctrl+Z puts it back).")
 
     def open_folder(self, path):
         if os.path.isdir(path):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    # ---------------------------------------------------------------- mod lists
+    def open_mod_list(self):
+        from folm_core import modlist
+        start = os.path.join(HERE, "lists") if os.path.isdir(os.path.join(HERE, "lists")) else os.path.expanduser("~")
+        f, _ = QFileDialog.getOpenFileName(self, "Install a mod list", start,
+                                           f"FOLM mod lists (*{modlist.EXT});;All files (*)")
+        if not f:
+            return
+        try:
+            self.m.need()
+            lst = modlist.load(f)
+            if lst.get("edition") and lst["edition"] != self.m.edition:
+                raise modlist.ListError(f"This list is for {EDITION_LABELS.get(lst['edition'], lst['edition'])}. "
+                                        "Switch the edition at the top first.")
+        except (modlist.ListError, FolmError) as e:
+            QMessageBox.warning(self, APP_NAME, f"Can't use that list: {e}")
+            return
+        d = ModListDialog(self, lst, os.path.expanduser("~/Downloads"))
+        if d.exec() != QDialog.Accepted:
+            return
+
+        def go(lst, folder, chooser, log=None):
+            return modlist.install(self.m, lst, folder, log=log or (lambda *a: None), chooser=chooser)
+
+        def done(r):
+            installed, skipped, missing, failed = r
+            self.say(f"Mod list {lst['name']}: installed {len(installed)}, already there {len(skipped)}, "
+                     f"missing {len(missing)}, failed {len(failed)}.")
+            msg = f"Installed {len(installed)} mod(s) from '{lst['name']}'."
+            if failed:
+                msg += "\n\nThese didn't install (the log says why):\n• " + "\n• ".join(failed)
+            if missing:
+                msg += f"\n\n{len(missing)} download(s) still missing: open the list again once you have them."
+            if installed:
+                msg += "\n\nDeploy to put them in the game."
+            QMessageBox.information(self, APP_NAME, msg)
+        self.run(go, lst, d.folder, self.bridge.chooser, then=done)
+
+    def save_mod_list(self):
+        from folm_core import modlist
+        try:
+            self.m.need()
+        except FolmError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return
+        f, _ = QFileDialog.getSaveFileName(self, "Save this profile as a mod list",
+                                           os.path.expanduser(f"~/{self.m.active}{modlist.EXT}"),
+                                           f"FOLM mod lists (*{modlist.EXT})")
+        if not f:
+            return
+        try:
+            path, lst, left_out = modlist.save(self.m, f)
+        except (modlist.ListError, OSError) as e:
+            QMessageBox.warning(self, APP_NAME, f"Couldn't save the list: {e}")
+            return
+        msg = (f"Saved {len(lst['mods'])} mods to {path}.\n\nThe list holds names, Nexus links and settings, "
+               "not the mod files: whoever uses it downloads the files themselves.")
+        if left_out:
+            msg += "\n\nNot in the list (they didn't come from a downloaded file):\n• " + "\n• ".join(left_out)
+        QMessageBox.information(self, APP_NAME, msg)
 
     # ---------------------------------------------------------------- install + library
     def pick_install(self):
@@ -902,6 +1951,7 @@ class Main(QMainWindow):
         if d:
             self.m.add_library_folder(d)
             self.refresh()
+            self.rewatch_downloads()
             self.tabs.setCurrentIndex(3)
 
     def remove_lib_folder(self):
@@ -909,6 +1959,7 @@ class Main(QMainWindow):
         if it:
             self.m.remove_library_folder(it.text())
             self.refresh()
+            self.rewatch_downloads()
             self.tabs.setCurrentIndex(3)
 
     def scan_library(self):
@@ -929,11 +1980,13 @@ class Main(QMainWindow):
         self.run(self.m.scan_library, then=show)
 
     def changeEvent(self, e):
-        """Refresh when the window is focused, so changes made elsewhere (CLI, another window) show up."""
+        """When the window is focused, show changes made elsewhere (CLI, another window). Only if the setup
+        really changed: a full refresh rescans every mod's files, which takes seconds on a slow PC, and
+        doing it on every click back into the window froze FOLM ("Wait or Force Close")."""
         super().changeEvent(e)
         if e.type() == e.Type.ActivationChange and self.isActiveWindow() and not self.jobs and not self.loading:
-            self.m.sync()
-            self.refresh()
+            if self.m.sync():
+                self.refresh()
 
     # drag & drop archives onto the window
     def dragEnterEvent(self, e):
@@ -946,6 +1999,30 @@ class Main(QMainWindow):
             if p.lower().endswith((".7z", ".zip", ".rar", ".fomod", ".exe")):
                 self.install(p)
                 break
+
+    def optimize(self):
+        if not self.m:
+            return
+        d = OptimizeDialog(self)
+        if not d.exec():
+            return
+        from folm_core import optimize
+        changed = optimize.apply(self.m, d.choices())
+        if not changed:
+            self.say("Optimize: nothing to change.")
+            return
+        self.say("Optimize: " + ", ".join(f"{n} {'on' if self.m.setting(k) else 'off'}"
+                                         for k, n, *_ in optimize.FIXES if k in changed) + ".")
+        self.loading = True
+        try:
+            for k, act in self.setting_actions.items():
+                if k in changed and act.isCheckable():
+                    act.setChecked(bool(self.m.setting(k)))
+        finally:
+            self.loading = False
+        self.refresh()
+        if self.m.deployed:
+            self.run(self.m.deploy)
 
     def change_setting(self, key, on):
         if self.loading:
@@ -994,6 +2071,21 @@ class Main(QMainWindow):
     # ---------------------------------------------------------------- "Mark as handled" (LOOT messages)
     def plugin_menu(self, pos):
         it = self.plugins.itemAt(pos)
+        name = it.data(1, Qt.UserRole) if it else None
+        if name:                                           # a plugin row: move it in the load order
+            at_end = any(p.lower() == name.lower() for p in self.m.cur.get("plugin_last", []))
+            menu = QMenu(self)
+            menu.addAction("Load earlier").triggered.connect(lambda: self.move_plugin(name, "earlier"))
+            menu.addAction("Load later").triggered.connect(lambda: self.move_plugin(name, "later"))
+            menu.addSeparator()
+            if at_end:
+                menu.addAction("Don't keep at the end").triggered.connect(lambda: self.move_plugin(name, "auto"))
+            else:
+                menu.addAction("Keep at the end of the load order").triggered.connect(
+                    lambda: self.move_plugin(name, "end"))
+            menu.addAction("Back to FOLM's order").triggered.connect(lambda: self.move_plugin(name, "auto"))
+            menu.exec(self.plugins.viewport().mapToGlobal(pos))
+            return
         msg = it.data(0, Qt.UserRole) if it else None
         if not msg:
             return
@@ -1020,6 +2112,19 @@ class Main(QMainWindow):
         if menu.isEmpty():
             return
         menu.exec(self.plugins.viewport().mapToGlobal(pos))
+
+    def move_plugin(self, name, where):
+        self.remember(f"move {name}")
+        self.m.move_plugin(name, where)
+        self.tell({"earlier": f"{name} loads earlier", "later": f"{name} loads later",
+                   "end": f"{name} is kept at the end of the load order",
+                   "auto": f"{name} is back in FOLM's order"}[where] + " (deploy to put it in the game).")
+        self.refresh()
+        for i in range(self.plugins.topLevelItemCount()):   # keep it selected, so it can be moved again
+            x = self.plugins.topLevelItem(i)
+            if x.data(1, Qt.UserRole) == name:
+                self.plugins.setCurrentItem(x)
+                break
 
     def clean_plugin(self, plugin):
         if QMessageBox.question(self, "Clean plugin",

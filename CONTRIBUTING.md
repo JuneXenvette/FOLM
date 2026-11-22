@@ -27,7 +27,7 @@ Point FOLM at a throwaway data folder while developing, so your real setup stays
 | `folm_core/fomod.py` | Native XML FOMOD installer |
 | `folm_core/legacy.py`, `fomm_shim/FommShim.cs` | Old FOMM C# installers: Mono + FOLM's FOMM API shim, sandboxed with bubblewrap |
 | `folm_core/wintool.py` | Windows `.exe` installers/patchers: Proton's Wine + bubblewrap, game folder mounted copy-on-write (overlayfs in a user namespace); writes become the mod |
-| `folm_core/tools.py` | Tools tab catalog (GECK, xEdit, xLODGen); running them safely is `Manager.run_tool` / `_begin_tool_session` in manager.py |
+| `folm_core/tools.py` | Tools tab catalog (GECK, xEdit, xLODGen) and their installed versions; running them safely is `Manager.run_tool` / `_begin_tool_session` in manager.py |
 | `folm_core/desktop.py` | App-menu entry and the Nexus link handler, written from the app (needed for the AppImage); entries follow a moved or newer AppImage |
 | `packaging/` | AppImage build: `build-appimage.sh` (pinned, checksum-checked Python, PySide6 and 7-Zip), `AppRun`, licences. `.github/workflows/release.yml` runs it for `v*` tags and makes a draft release |
 | `folm_core/deploy.py` | Hard-link deployment, case merging, game-file backups, exact undeploy |
@@ -35,12 +35,21 @@ Point FOLM at a throwaway data folder while developing, so your real setup stays
 | `folm_core/health.py`, `requires.py` | Health check; requirement scan (DLL startup checks, known list, Nexus requirements) |
 | `folm_core/wineprefix.py`, `ini.py`, `window.py` | Proton/Wine: DLL overrides, INI edits that undo cleanly, borderless window |
 | `folm_core/crash.py`, `saves.py` | Crash reports; reading plugin lists from save files |
+| `folm_core/memwatch.py`, `memwatch/memwatch.c` | Memory gauge: a tiny read-only Windows helper in the game's own Wine reports how full its 4 GB is (built with MinGW; shipped in the AppImage) |
+| `folm_core/optimize.py` | ⚡ Optimize: the list of Linux fixes (each one a FOLM setting), where each stands, and applying choices |
+| `folm_core/steamopts.py` | Quiet fixes in the game's Steam launch options (`localconfig.vdf`, edited only while Steam is closed; a small text-preserving VDF reader); FOLM removes only what it added |
+| `folm_core/lowmemsave.py` | The game saves itself at the first memory warning: a JIP LN `gr_` script (written on deploy) watches for a request file FOLM writes; FOLM renames the save to a unique name |
+| `folm_core/updates.py` | Tools tab "Check for updates": a newer FOLM (GitHub) and newer files for installed Nexus mods |
+| `folm_core/helpdocs.py`, `folm_core/help/*.md` | The FAQ and Resources tabs. Plain Markdown: `# Category`, `## Topic`, then its text. Edit the .md files to change them |
+| `folm_core/look.py` | ⚙ Settings → Personalize: FOLM's colors and font (`look.json` in FOLM's home), and the game's own interface colors read from `FalloutPrefs.ini` |
 | `folm_core/esp.py`, `scriptcode.py`, `bsa.py` | Readers/writers for plugins, compiled scripts and BSA archives |
+| `folm_core/modlist.py`, `lists/` | Mod lists: reading/writing `.folmlist` files, finding the downloads, installing in order |
 | `folm_core/version.py` | FOLM's version number; release tags must match it |
 | `games/<edition>/game.json` | Per-game facts (exe names, Steam app ids, vanilla plugins) |
 
 [docs/development-log.md](docs/development-log.md) is the diary of how all this was built and tested,
 including many Proton and mod quirks. Search it before re-investigating something.
+[docs/tech-debt.md](docs/tech-debt.md) lists FOLM's known weak spots; it's a good place to pick work from.
 
 ## House rules
 
@@ -55,8 +64,9 @@ These kept FOLM safe and pleasant to use; please keep them.
   (downloaded by the player) builds TTW; never ship or re-host TTW or its installer.
 - **Only refuse what isn't for the game.** Every New Vegas / Fallout 3 mod format should install; a file
   is turned away only if it's for another game, with a plain reason.
-- **Privacy.** Nothing leaves the PC except the LOOT masterlist download and Nexus requirement lookups
-  (public data, mod ids only, no account). Crash reports stay local and redact home paths and usernames.
+- **Privacy.** Nothing leaves the PC except the LOOT masterlist download, Nexus requirement lookups
+  (public data, mod ids only, no account) and the update check, which runs only when the player presses
+  Check for updates (GitHub's latest-release info; Nexus file lists by mod id). Crash reports stay local and redact home paths and usernames.
 - **No Nexus API keys.** Nexus only lets apps it has registered use players' personal API keys, so FOLM
   doesn't ask for one (the 1.0 sign-in was removed in 1.1.1). Don't add it back without registering FOLM.
 - **Sandbox untrusted installers.** Old installer scripts and Windows installers run under bubblewrap with
