@@ -1,0 +1,63 @@
+diff --git a/heap_replacer/main/heap_replacer.h b/heap_replacer/main/heap_replacer.h
+index b147292..63bfdd2 100644
+--- a/heap_replacer/main/heap_replacer.h
++++ b/heap_replacer/main/heap_replacer.h
+@@ -23,6 +23,27 @@ void hr_free(void *addr);
+ struct mheap m;
+ struct dheap d;
+ 
++/* The size of a block over 16 MB (from VirtualAlloc): its committed pages from the start. */
++static size_t hr_winapi_mem_size(void *addr)
++{
++    MEMORY_BASIC_INFORMATION mbi;
++    BYTE *p;
++    size_t size = 0;
++
++    if (VirtualQuery(addr, &mbi, sizeof(mbi)) != sizeof(mbi) || mbi.AllocationBase != addr ||
++        mbi.Type != MEM_PRIVATE)
++    {
++        return 0;
++    }
++    for (p = (BYTE *)addr; VirtualQuery(p, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.AllocationBase == addr &&
++                           mbi.State == MEM_COMMIT;
++         p += mbi.RegionSize)
++    {
++        size += mbi.RegionSize;
++    }
++    return size;
++}
++
+ void *hr_malloc(size_t size)
+ {
+     void *addr;
+@@ -105,6 +126,10 @@ void *hr_realloc(void *addr, size_t size)
+     }
+ 
+     new_addr = hr_malloc(size);
++    if (!new_addr) /* keep the old block when the new one can't be had, like realloc */
++    {
++        goto end;
++    }
+     memcpy(new_addr, addr, old_size);
+     hr_free(addr);
+ 
+@@ -131,6 +156,10 @@ void *hr_recalloc(void *addr, size_t count, size_t size)
+     }
+ 
+     new_addr = hr_calloc(count, size);
++    if (!new_addr)
++    {
++        goto end;
++    }
+     memcpy(new_addr, addr, old_size);
+     hr_free(addr);
+ 
+@@ -157,6 +186,8 @@ size_t hr_mem_size(void *addr)
+         goto end;
+     }
+ 
++    size = hr_winapi_mem_size(addr); /* a block over 16 MB: was 0, so realloc copied nothing */
++
+ end:
+     return size;
+ }

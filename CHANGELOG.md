@@ -2,7 +2,7 @@
 
 What changed in each FOLM release. The newest is on top.
 
-## 1.2.0 (not released yet)
+## 1.2.0
 
 The start of the memory project: FOLM now watches the game's 4 GB, warns before it's full and saves
 the game for you. The plan is in `docs/memory-project/`.
