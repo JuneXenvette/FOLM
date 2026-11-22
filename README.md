@@ -16,38 +16,85 @@ Proven on real setups: TTW 3.4 with about 50 mods (31 plugins, 18 script extende
 with its DXVK build, NV SMP, BOG, EVE Lite), and Fallout 3 with FOSE, the Anniversary Patcher, the BSA
 Decompressor, the ESM Patcher and the Unofficial Patch, all installed and launched from FOLM on Linux.
 
-## The goal: let New Vegas breathe
+## The goal
+
+**To make the best modding tool for Fallout 3 and New Vegas, and to help revive the modding scene for
+both games.**
+
+FOLM started on Linux, because that's where these games were hardest to mod. A **Windows edition is
+planned** too: most players are on Windows, and they deserve the same tool.
+
+### The 4 GB limit: from crashing to breathing
 
 New Vegas and Fallout 3 are old 32-bit games. However much memory your PC has, they can only use
 4 GB, and a big mod setup fills that up until the game crashes. For years the answer has been "use
 fewer mods".
 
-FOLM's new goal is to change that answer. Instead of crashing when the 4 GB get full, the game should
-**breathe**: FOLM measures how full the game really is, warns you and saves your game before it's too
-late, trims what doesn't need to be there, and, step by step, moves work out of the game's 4 GB
-altogether. The aim is bigger mod setups that stay stable, and a reason for modders to come back to
-New Vegas. The plan, with what's done and what's next, is in
-[docs/memory-project/](docs/memory-project/guide.md).
+That's where most of FOLM's attention goes now. Today FOLM measures how full the game's 4 GB really
+are, warns you before they run out, saves your game for you, and explains a memory crash in plain
+words when one happens. The next step goes further: changing *how the game uses* that memory, so a
+full 4 GB makes the game breathe instead of crash. That work is becoming a core part of FOLM's
+future. More on it when it's ready.
 
-The memory work will become **Second Wind**: a free, open mod for everyone, on Windows too and with
-any mod manager. It saves your game when memory runs low, pulls in far-away clutter during fights, and
-lets other mods ask how much room is left. A Windows edition of FOLM comes after that. Most New Vegas
-players are on Windows, and Second Wind's parts are Windows programs already, so they get those first.
+The memory work will also come out as a **separate mod**, for players who don't use FOLM or can't
+(on Windows, or with another mod manager).
 
-> I'm a fan of the series, and I hope this helps revive the modding scene for this wonderful game.
+### Part-time, and open
+
+FOLM is made part-time, by a fan of the series, so new versions come when they're ready. It's open
+source (GPL-3.0): ideas, bug reports and pull requests are welcome.
+
+> I'm a fan of the series, and I hope this helps revive the modding scene for these wonderful games.
 > — the FOLM maintainer
+
+## At a glance
+
+| | |
+|---|---|
+| ![Mods and plugins](assets/screenshots/plugins.png) | ![File conflicts](assets/screenshots/conflicts.png) |
+| **Mods and plugins.** Your mods on the left in groups, with who wins each file conflict; the load order on the right, sorted with LOOT's rules. | **Conflicts.** Which mod wins each file, and which mods lose it. |
+| ![Updates](assets/screenshots/updates.png) | ![Game settings](assets/screenshots/settings.png) |
+| **Check for updates.** Every mod sorted into needs an update, up to date, or can't be checked, each with a link. | **Game settings in plain words.** FPS cap, borderless window, the low-memory save, the sound fix. FOLM puts them into the game for you. |
+| ![Questions and answers](assets/screenshots/faq.png) | |
+| **Help built in.** Questions and answers, and modder resources, inside the app. | |
 
 ## Status
 
-FOLM is actively developed again. It's open source (GPL-3.0): issues and pull requests are welcome;
-see [CONTRIBUTING.md](CONTRIBUTING.md).
+FOLM is developed part-time. It's open source (GPL-3.0): issues and pull requests are welcome;
+see [CONTRIBUTING.md](CONTRIBUTING.md). What changed in each version is in
+[CHANGELOG.md](CHANGELOG.md).
 
 | | |
 |---|---|
 | ✅ Tested | Linux Mint 22 (Cinnamon, X11), Steam + Proton 10 / GE-Proton, New Vegas + TTW 3.4, Fallout 3 GOTY + FOSE, AMD GPU (RADV) |
 | ❓ Not tested | Wayland, other distros (should work), NVIDIA, Steam Deck, Flatpak Steam |
-| ⚠️ Lightly tested | Fallout 3 beyond the start of the game (no long playthrough yet); xEdit and xLODGen from the Tools tab (built and unit-tested, not yet tried on a real game) |
+| ⚠️ Lightly tested | Fallout 3 beyond the start of the game (no long playthrough yet); xEdit and xLODGen from the Tools tab (built and unit-tested, not yet tried on a real game); the low-memory save (tested against a stand-in for the game, not yet in a real session) |
 | ❌ Not supported yet | BAIN wizard scripts (`wizard.txt`; plain BAIN packages work), Nexus Collections, the FO3 → NV converter (only its check report works), Windows (planned) |
+
+## What's new in 1.2.0
+
+The start of the memory project. In short (the full list is in [CHANGELOG.md](CHANGELOG.md)):
+
+- **Memory gauge:** how full the game's 4 GB are, live, with a warning before they run out.
+- **Low-memory save:** the game saves itself when memory runs low (New Vegas, with JIP LN).
+- **Crash reports that read memory crashes:** what ran out and why, in plain words.
+- **Updates window:** every mod as needs an update / up to date / can't be checked, with links.
+- **Mod lists:** install a whole setup from a small `.folmlist` file, or save yours to share.
+- **Move plugins in the load order,** including "keep this one last" for weather and lighting mods.
+- **Fixes:** updating a deployed mod now really replaces it in the game; fewer false "needs" notes.
+
+## What's next (being thought over)
+
+Plans, not promises: FOLM is part-time, and the memory work comes first.
+
+- **The memory work:** changing how the game uses its 4 GB, so it breathes instead of crashing;
+  also as a separate mod for players who don't use FOLM.
+- **A Windows edition** of FOLM.
+- **Install straight from Nexus:** registering FOLM with Nexus Mods as an official mod manager, so
+  the "Mod Manager Download" button and Collections can send mods straight to FOLM. Until then,
+  download with the Manual button and drop the file on FOLM.
+- **Read other managers' lists:** import a setup from a Mod Organizer 2 profile, a Wabbajack list
+  or a list of FOMOD choices. Today FOLM's mod lists read its own `.folmlist` files.
 
 ## What it does
 
