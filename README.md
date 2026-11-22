@@ -55,8 +55,8 @@ source (GPL-3.0): ideas, bug reports and pull requests are welcome.
 | **Mods and plugins.** Your mods on the left in groups, with who wins each file conflict; the load order on the right, sorted with LOOT's rules. | **Conflicts.** Which mod wins each file, and which mods lose it. |
 | ![Updates](assets/screenshots/updates.png) | ![Game settings](assets/screenshots/settings.png) |
 | **Check for updates.** Every mod sorted into needs an update, up to date, or can't be checked, each with a link. | **Game settings in plain words.** FPS cap, borderless window, the low-memory save, the sound fix. FOLM puts them into the game for you. |
-| ![Questions and answers](assets/screenshots/faq.png) | |
-| **Help built in.** Questions and answers, and modder resources, inside the app. | |
+| ![Questions and answers](assets/screenshots/faq.png) | ![Personalize FOLM](assets/screenshots/personalize.png) |
+| **Help built in.** Questions and answers, and modder resources, inside the app. | **Make it yours.** Colors and font, shown live as you pick them, or take your Pip-Boy and HUD colors straight from the game's settings. |
 
 ## Status
 
