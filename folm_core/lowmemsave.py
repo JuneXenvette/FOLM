@@ -8,7 +8,10 @@ How the game is asked, with nothing installed but what the player already has (x
 - On deploy, FOLM writes a small script, Data/NVSE/plugins/scripts/gr_folm_lowmemsave.txt. JIP LN runs
   `gr_` scripts once at game start; this one registers a check that runs every 5 seconds of play (never
   in menus, so never during dialogue or the Pip-Boy) and saves as "FOLM_LowMemory" when the file
-  Data/FOLM/save-now.txt exists. Undeploy removes the script again.
+  Data/FOLM/save-now.txt exists. Undeploy removes the script again. The check asks for both
+  "Data\\FOLM\\..." and "FOLM\\...": JIP LN's own file paths start at the game's folder, but this isn't
+  confirmed for FileExists, and the wrong one simply never matches. The check runs every 300 frames
+  (5 seconds at 60 FPS).
 - FOLM writes that file when the gauge warns, removes it as soon as the save appears, then renames the
   save (and its script-extender co-saves) to a unique name, e.g. "FOLM_LowMemory_2026-11-21_21-04".
 """
@@ -25,8 +28,10 @@ SCRIPT = f"""; FOLM: save the game when its memory runs low. Written by FOLM on 
 ; Every 5 seconds of play (never in menus): if FOLM has written Data\\FOLM\\save-now.txt, save as
 ; "{NAME}". FOLM then removes that file and gives the save a unique name.
 SetGameMainLoopCallback (begin function {{}}
-    if FileExists "FOLM\\save-now.txt"
-        if player.GetDead == 0
+    if player.GetDead == 0
+        if FileExists "Data\\FOLM\\save-now.txt"
+            con_Save "{NAME}"
+        elseif FileExists "FOLM\\save-now.txt"
             con_Save "{NAME}"
         endif
     endif

@@ -49,7 +49,7 @@ a requirement "not needed" in the app, saved per mod, like "handled" messages al
   in game which one the HUD really shows, and name them after that.
 - **The low-memory save hasn't run in the real game yet.** Tested with a fake game; the script uses
   JIP LN's `SetGameMainLoopCallback` and `FileExists`, and xNVSE's `con_Save`, in a `gr_` text script
-  with a lambda. Confirm in game that it saves (and only once), and that the renamed save loads.
+  with a lambda. Confirm in game that it saves (and only once), and that the renamed save loads. Also find out which folder JIP's `FileExists` starts from (the script asks for both `Data\FOLM\…` and `FOLM\…` until then), and whether the memory warning can fire at all with NVHR (see the gauge item below).
 - **The help text is written by hand.** The FAQ describes buttons and menus by name; when one is
   renamed, `folm_core/help/faq.md` must change too. No test catches a stale answer.
 - **Mod lists can pick a browser's duplicate download** ("file (1).7z") when the original is also there.
